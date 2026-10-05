@@ -179,6 +179,17 @@ def create_app(service: Service | None = None) -> FastAPI:
             raise HTTPException(400, str(e)) from e
         return {"experience_id": exp_id}
 
+    @app.get("/api/runs/{rid}/log.md")
+    async def run_log(request: Request, rid: str):
+        from ..trace_export import run_to_markdown
+
+        try:
+            text = run_to_markdown(svc(request).trace, rid)
+        except KeyError as e:
+            raise HTTPException(404, str(e)) from e
+        return Response(text, media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="run-{rid}.md"'})
+
     @app.get("/api/runs/{rid}/otel")
     async def otel(request: Request, rid: str):
         get_run(request, rid)

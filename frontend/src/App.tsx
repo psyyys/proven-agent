@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleAlert, Cpu, Download, X } from "lucide-react";
+import { CircleAlert, Cpu, Download, FileText, X } from "lucide-react";
 import { api, streamEvents } from "./api";
 import { deriveRun } from "./derive";
 import { ReportPanel } from "./components/ReportPanel";
@@ -131,6 +131,11 @@ export default function App() {
               <Cpu size={13} className="shrink-0" />
               <span className="hidden max-w-48 truncate sm:inline">{health.llm_configured ? health.model : "未配置模型"}</span>
             </span>
+          )}
+          {activeRun && view && ["done", "error", "cancelled", "needs_input"].includes(view.status) && (
+            <a href={api.logUrl(activeRun)} className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-muted hover:border-accent hover:text-accent" title="导出这次运行的完整日志（Markdown），方便排查问题">
+              <FileText size={13} /> 导出日志
+            </a>
           )}
           {session && session.runs.length + runs.length > 0 && (
             <a href={api.notebookUrl(session.id)} className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-muted hover:border-accent hover:text-accent" title="导出为 Jupyter Notebook，可复现全部计算">

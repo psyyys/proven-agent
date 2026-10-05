@@ -84,6 +84,31 @@ async def _eval(args) -> None:
         await svc.shutdown()
 
 
+def _logs(args) -> None:
+    from .trace import TraceStore
+    from .trace_export import list_runs, run_to_markdown
+
+    settings = Settings.from_env()
+    db = settings.workspace / "trace.db"
+    if not db.exists():
+        print(f"还没有运行记录（{db} 不存在）")
+        return
+    store = TraceStore(db)
+    runs = list_runs(store, limit=max(args.n, 1))
+    if not args.run_id:
+        print(f"{'编号':<12}{'时间':<18}{'状态':<12}{'Token':>9}  问题")
+        for r in runs:
+            print(f"{r['run_id']:<12}{r['time']:<18}{r['status']:<12}{r['tokens']:>9}  {r['question'][:40]}")
+        print("\n导出日志：proven logs <编号>    或    proven logs latest")
+        return
+    run_id = runs[0]["run_id"] if args.run_id == "latest" and runs else args.run_id
+    out_dir = settings.workspace / "logs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"run-{run_id}.md"
+    out.write_text(run_to_markdown(store, run_id), encoding="utf-8")
+    print(f"已导出：{out.resolve()}")
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="proven", description="可追溯的数据分析 Agent")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -105,6 +130,10 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("doctor", help="检查模型配置与网络连接")
 
+    lg = sub.add_parser("logs", help="查看运行记录，或导出某次运行的日志")
+    lg.add_argument("run_id", nargs="?", help="运行编号；写 latest 表示最近一次；不写则列出最近的运行")
+    lg.add_argument("-n", type=int, default=15, help="列出的条数")
+
     args = ap.parse_args(argv)
     if args.cmd == "serve":
         import uvicorn
@@ -114,6 +143,8 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_ask(args))
     elif args.cmd == "eval":
         asyncio.run(_eval(args))
+    elif args.cmd == "logs":
+        _logs(args)
     elif args.cmd == "doctor":
         from .doctor import main as doctor_main
 

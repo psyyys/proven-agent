@@ -43,6 +43,7 @@ export const api = {
   cancel: (rid: string) => request("POST", `/api/runs/${rid}/cancel`),
   verify: (rid: string) => request<{ experience_id: number }>("POST", `/api/runs/${rid}/verify`),
   notebookUrl: (sid: string) => `/api/sessions/${sid}/notebook`,
+  logUrl: (rid: string) => `/api/runs/${rid}/log.md`,
 };
 
 /** Subscribe to a run's event stream. Reconnects resume after the last seen sequence number. */
