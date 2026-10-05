@@ -44,16 +44,19 @@ def get(url: str) -> bytes:
 def fetch_business(out: Path) -> None:
     dest = out / "business" / "chinook"
     dest.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(suffix=".sqlite") as tmp:
-        tmp.write(get(CHINOOK))
-        tmp.flush()
-        con = sqlite3.connect(tmp.name)
-        tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
-        for t in tables:
-            df = pd.read_sql_query(f'SELECT * FROM "{t}"', con)
-            df.to_csv(dest / f"{t}.csv", index=False)
-            print(f"  ✓ chinook/{t}.csv  {len(df)} 行")
-        con.close()
+    # Write and close the file before SQLite opens it: Windows cannot reopen an open NamedTemporaryFile.
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "chinook.sqlite"
+        db_path.write_bytes(get(CHINOOK))
+        con = sqlite3.connect(db_path)
+        try:
+            tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+            for t in tables:
+                df = pd.read_sql_query(f'SELECT * FROM "{t}"', con)
+                df.to_csv(dest / f"{t}.csv", index=False)
+                print(f"  ✓ chinook/{t}.csv  {len(df)} 行")
+        finally:
+            con.close()  # must be closed before the temp directory is removed (Windows file locks)
 
 
 def _read_rdb(text: str) -> pd.DataFrame:
