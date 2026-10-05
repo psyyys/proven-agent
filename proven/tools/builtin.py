@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from .. import trace as T
 from ..findings import unsupported_numbers
@@ -80,26 +81,38 @@ async def record_finding(ctx, args) -> ToolResult:
     if not claim or not evidence:
         return ToolResult("claim 和 evidence 都必须填写", ok=False)
 
-    if evidence.startswith("C"):
-        cell = ctx.session.cells.get(evidence)
-        if cell is None:
-            return ToolResult(f"找不到代码单元 {evidence}。", ok=False)
-        if not cell.ok:
-            return ToolResult(f"{evidence} 运行出错，不能作为证据。", ok=False)
-        evidence_text, etype = cell.plain_text(), "cell"
-    elif evidence.startswith("D"):
-        chunk = ctx.session.kb.get(evidence)
-        if chunk is None:
-            return ToolResult(f"找不到文档片段 {evidence}。", ok=False)
-        evidence_text, etype = chunk.text, "doc"
-    else:
-        return ToolResult("evidence 必须是代码单元编号（如 C3）或文档片段编号（如 D12）", ok=False)
+    ids = [x for x in re.split(r"[\s,，、;；]+", evidence) if x]
+    texts: list[str] = []
+    for eid in ids:
+        if eid.startswith("C"):
+            cell = ctx.session.cells.get(eid)
+            if cell is None:
+                return ToolResult(f"找不到代码单元 {eid}。", ok=False)
+            text = cell.plain_text()
+            if not text.strip():
+                reason = "运行出错且没有输出" if not cell.ok else "没有任何输出"
+                return ToolResult(f"{eid} {reason}，不能作为证据。请先运行代码把结果 print 出来。", ok=False)
+            # Numbers written in the code are visible parameters (thresholds, periods), so they count too.
+            # An errored cell still counts for what it printed before the error.
+            texts.append(text + "\n" + cell.code)
+        elif eid.startswith("D"):
+            chunk = ctx.session.kb.get(eid)
+            if chunk is None:
+                return ToolResult(f"找不到文档片段 {eid}。", ok=False)
+            texts.append(chunk.text)
+        else:
+            return ToolResult(f"evidence 编号 {eid} 无效：应为代码单元（如 C3）或文档片段（如 D12），多个用逗号分隔", ok=False)
+    kinds = {i[0] for i in ids}
+    etype = "cell" if kinds == {"C"} else "doc" if kinds == {"D"} else "mixed"
+    evidence = ",".join(ids)
 
-    missing = unsupported_numbers(claim, evidence_text)
+    missing = unsupported_numbers(claim, "\n".join(texts) + "\n" + ctx.run.question)
     if missing:
+        hint = _where_else(ctx, missing, exclude=set(ids))
         return ToolResult(
-            f"登记被拒绝：数字 {', '.join(missing)} 没有出现在 {evidence} 的输出中。"
-            "请先运行代码把这些数字 print 出来（或改为引用正确的单元），再登记。不要自己心算。",
+            f"登记被拒绝：数字 {', '.join(missing)} 没有出现在 {evidence} 的输出或代码中。{hint}"
+            "如果是新算出的数字，请先运行代码把它 print 出来再登记；不要自己心算。"
+            "一条结论只写一个主题，数字少而准更容易通过。",
             ok=False,
             data={"rejected": True, "missing": missing},
         )
@@ -112,6 +125,25 @@ async def record_finding(ctx, args) -> ToolResult:
     f = ctx.run.findings.add(claim, etype, evidence, value)
     ctx.emit(T.FINDING, **f.to_dict())
     return ToolResult(f"已登记 {f.id}：{claim}（证据 {evidence}）", data={"finding_id": f.id})
+
+
+def _where_else(ctx, missing: list[str], exclude: set[str]) -> str:
+    """Point the model at other cells of this run whose output contains the missing numbers."""
+    from ..findings import extract_numbers, matches, numbers_in_evidence
+
+    found: dict[str, list[str]] = {}
+    targets = [n for n in extract_numbers(" ".join(missing), skip_trivial=False)]
+    for cid in reversed(ctx.run.cell_ids):
+        if cid in exclude:
+            continue
+        values = numbers_in_evidence(ctx.session.cells[cid].plain_text())
+        for n in targets:
+            if any(matches(n, v) for v in values):
+                found.setdefault(n.raw, []).append(cid)
+    if not found:
+        return ""
+    parts = [f"{num} 出现在 {'、'.join(cids[:3])}" for num, cids in found.items()]
+    return "提示：" + "；".join(parts) + "，可以同时引用多个证据，如 evidence=\"C6,C8\"。"
 
 
 async def ask_user(ctx, args) -> ToolResult:
@@ -188,7 +220,7 @@ def builtin_tools() -> ToolRegistry:
                 params(
                     {
                         "claim": {"type": "string", "description": "结论陈述，包含具体数字，如：2013 年总销售额为 2,328.60 美元"},
-                        "evidence": {"type": "string", "description": "证据编号：代码单元（如 C3）或文档片段（如 D12）"},
+                        "evidence": {"type": "string", "description": "证据编号：代码单元（如 C3）或文档片段（如 D12）；多个用逗号分隔，如 C6,C8"},
                         "value": {"type": "number", "description": "该结论的核心数值（可选）"},
                     },
                     ["claim", "evidence"],

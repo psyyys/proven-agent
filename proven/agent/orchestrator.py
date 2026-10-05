@@ -7,6 +7,7 @@ agent (Planner / Analyst / Reviewer / Writer) without changing tools or the trac
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import re
 import time
@@ -23,6 +24,7 @@ from .session import Session
 
 KEEP_FULL_TOOL_RESULTS = 6  # older tool results are shortened to keep the context small
 SHORT_TOOL_RESULT = 600
+SHORT_CODE = 400
 
 
 class Orchestrator:
@@ -135,9 +137,15 @@ class Orchestrator:
             },
         ]
         nudged = False
-        for step in range(1, self.settings.max_steps + 1):
+        max_steps = self.settings.max_steps
+        warned = False
+        for step in range(1, max_steps + 1):
             if run.cancelled:
                 return ""
+            remaining = max_steps - step + 1
+            if remaining <= 3 and not warned:
+                warned = True
+                messages.append({"role": "user", "content": P.STEPS_LOW.format(remaining=remaining)})
             _compact(messages)
             resp = await self._call(ctx, messages, phase="execute", tools=self.tools.schemas(), step=step)
             messages.append(resp.as_message())
@@ -168,7 +176,10 @@ class Orchestrator:
         if call.parse_error:
             text, ok, data, stop = f"工具参数解析失败：{call.parse_error}。请重新调用，参数必须是 JSON 对象。", False, {}, False
         elif tool is None:
-            text, ok, data, stop = f"没有名为 {call.name} 的工具。可用工具：{', '.join(self.tools.names())}", False, {}, False
+            close = difflib.get_close_matches(call.name, self.tools.names(), n=1, cutoff=0.6)
+            hint = f"你是不是想调用 {close[0]}？" if close else ""
+            text = f"没有名为 {call.name} 的工具。{hint}可用工具：{', '.join(self.tools.names())}"
+            ok, data, stop = False, {}, False
         else:
             try:
                 r = await tool.handler(ctx, call.arguments)
@@ -271,12 +282,31 @@ def describe_error(e: BaseException) -> str:
 
 
 def _compact(messages: list[dict[str, Any]]) -> None:
-    """Shorten old tool results in place; the full text is always in the trace."""
+    """Shorten old tool results and old code in place; the full text is always in the trace.
+
+    Messages are only ever shortened once, after they fall out of the recent window, so the prefix of
+    the conversation stays stable and providers' prompt caching keeps working."""
     tool_idx = [i for i, m in enumerate(messages) if m["role"] == "tool"]
+    if len(tool_idx) <= KEEP_FULL_TOOL_RESULTS:
+        return
+    boundary = tool_idx[-KEEP_FULL_TOOL_RESULTS]
     for i in tool_idx[:-KEEP_FULL_TOOL_RESULTS]:
         c = messages[i]["content"]
         if len(c) > SHORT_TOOL_RESULT:
             messages[i]["content"] = c[:SHORT_TOOL_RESULT] + "\n...[较早的输出已折叠]"
+    for m in messages[:boundary]:
+        for tc in m.get("tool_calls") or []:
+            fn = tc["function"]
+            if len(fn["arguments"]) <= SHORT_CODE:
+                continue
+            try:
+                args = json.loads(fn["arguments"])
+            except json.JSONDecodeError:
+                continue
+            for key in ("code", "sql"):
+                if isinstance(args.get(key), str) and len(args[key]) > SHORT_CODE:
+                    args[key] = args[key][: SHORT_CODE // 2] + "\n# ...[较早的代码已折叠，变量仍在内核中]"
+            fn["arguments"] = json.dumps(args, ensure_ascii=False)
 
 
 def _parse_json(text: str) -> dict[str, Any] | None:

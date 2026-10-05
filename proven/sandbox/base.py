@@ -53,8 +53,10 @@ class CellResult:
         if self.stderr.strip():
             parts.append("[stderr]\n" + self.stderr.strip()[-1500:])
         if self.error:
+            # The error line first, then only the user-code frame: library internals waste context.
             tb = self.error.get("traceback", "")
-            parts.append(f"[ERROR] {self.error['name']}: {self.error['value']}\n{tb[-2000:]}")
+            frame = _user_frame(tb)
+            parts.append(f"[ERROR] {self.error['name']}: {self.error['value'][:800]}" + (f"\n{frame}" if frame else ""))
         text = "\n".join(parts) if parts else "(无输出。如需查看结果，请 print() 出来)"
         if len(text) > limit:
             head = text[: limit * 2 // 3]
@@ -64,6 +66,14 @@ class CellResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _user_frame(tb: str, limit: int = 700) -> str:
+    """The traceback frame that points into the cell's own code ("Cell In[5], line 6")."""
+    blocks = re.split(r"\n(?=Cell In\[|File )", tb)
+    cell = [b for b in blocks if b.startswith("Cell In[")]
+    text = cell[-1] if cell else (blocks[-1] if blocks else "")
+    return text.strip()[:limit]
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")

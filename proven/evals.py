@@ -105,7 +105,7 @@ def score(q: Question, run, expected: list[float] | None) -> tuple[bool, list[fl
         said_no = (run.plan or {}).get("answerable") is False or any(w in run.report for w in REFUSAL_WORDS)
         return (not numeric and said_no), got, "" if said_no else "没有明确拒答"
     if q.expect == "doc":
-        ok = any(f.evidence_type == "doc" for f in run.findings.items)
+        ok = any(f.evidence_type in ("doc", "mixed") for f in run.findings.items)
         return ok, got, "" if ok else "没有引用知识库片段"
     missing = [e for e in expected or [] if not any(_close(g, e, q.tol) for g in got)]
     return not missing, got, f"未找到 {missing}" if missing else ""

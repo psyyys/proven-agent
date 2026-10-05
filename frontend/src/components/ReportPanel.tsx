@@ -56,7 +56,8 @@ export function ReportPanel({
 
   const focusFinding = (f?: Finding) => {
     if (!f) return;
-    onFocus(f.evidence_type === "cell" ? `cell-${f.evidence_id}` : `chunk-${f.evidence_id}`);
+    const first = f.evidence_id.split(",")[0];
+    onFocus(first.startsWith("C") ? `cell-${first}` : `chunk-${first}`);
   };
 
   const tabs: { id: Tab; label: string; icon: any; count?: number }[] = [
@@ -138,7 +139,7 @@ export function ReportPanel({
                   <span className="mr-2 font-mono text-xs font-semibold text-ok">{f.id}</span>
                   {f.claim}
                   <span className="mt-1 block text-xs text-faint">
-                    证据：{f.evidence_type === "cell" ? "代码单元" : "文档片段"} {f.evidence_id}
+                    证据：{f.evidence_id.split(",").join("、")}
                   </span>
                 </button>
               ))}

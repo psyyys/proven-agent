@@ -84,7 +84,7 @@ export interface Cell {
 export interface Finding {
   id: string;
   claim: string;
-  evidence_type: "cell" | "doc";
+  evidence_type: "cell" | "doc" | "mixed";
   evidence_id: string;
   value: number | null;
   numbers: number[];
