@@ -116,7 +116,9 @@ async def record_finding(ctx, args) -> ToolResult:
 
 async def ask_user(ctx, args) -> ToolResult:
     q = args.get("question", "")
-    ctx.emit(T.ASK_USER, question=q, options=args.get("options") or [])
+    options = args.get("options") or []
+    ctx.run.pending_question = q + (f"（可选：{' / '.join(options)}）" if options else "")
+    ctx.emit(T.ASK_USER, question=q, options=options)
     return ToolResult("已向用户提问，等待回答。", stop=True, data={"question": q})
 
 

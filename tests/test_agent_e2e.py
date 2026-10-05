@@ -141,5 +141,6 @@ async def test_ask_user_pauses_run(settings):
         await svc.wait(run.id)
         assert run.status == "needs_input"
         assert any(e.type == T.ASK_USER for e in svc.trace.events(run.id))
+        assert "按哪个时间口径" in session.history[-1]["content"] and session.history[-2]["content"] == "月度销售额"
     finally:
         await svc.shutdown()

@@ -19,6 +19,8 @@ warnings.filterwarnings("ignore")
 import pandas as pd, numpy as np, duckdb
 import plotly.express as px, plotly.graph_objects as go, plotly.io as pio
 pio.renderers.default = "plotly_mimetype"
+pio.templates.default = "plotly_white"
+px.defaults.color_discrete_sequence = ["#0f766e", "#d97706", "#2563eb", "#be185d", "#65a30d", "#7c3aed"]
 pd.set_option("display.max_rows", 40)
 pd.set_option("display.max_columns", 30)
 pd.set_option("display.width", 200)
@@ -130,10 +132,13 @@ def _parse_display(data: dict) -> Output | None:
         return Output(kind="figure", data=fig, text=f"[图表] {title}".strip())
     if "application/vnd.dataresource+json" in data:
         res = data["application/vnd.dataresource+json"]
-        table = {
-            "columns": [f["name"] for f in res.get("schema", {}).get("fields", [])],
-            "rows": res.get("data", []),
-        }
+        columns = [f["name"] for f in res.get("schema", {}).get("fields", [])]
+        rows = res.get("data", [])
+        # A default RangeIndex adds nothing for the reader; drop it.
+        if res.get("schema", {}).get("primaryKey") == ["index"] and all(r.get("index") == i for i, r in enumerate(rows)):
+            columns = [c for c in columns if c != "index"]
+            rows = [{k: v for k, v in r.items() if k != "index"} for r in rows]
+        table = {"columns": columns, "rows": rows}
         # Round-trip through JSON so numpy/NaN values become plain JSON values.
         table = json.loads(json.dumps(table, default=str).replace("NaN", "null"))
         return Output(kind="table", data=table, text=text)

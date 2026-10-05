@@ -136,7 +136,8 @@ def unsupported_numbers(claim: str, evidence_text: str) -> list[str]:
     """Numbers in a claim that do not appear in the evidence output."""
     evidence = numbers_in_evidence(evidence_text)
     missing = []
-    for n in extract_numbers(claim, skip_trivial=False):
+    # Small whole numbers ("前 5 名") are skipped, consistent with the report check.
+    for n in extract_numbers(claim):
         if not any(matches(n, v) for v in evidence):
             missing.append(n.raw)
     return missing

@@ -52,3 +52,8 @@ def test_numbers_next_to_chinese_and_not_dates():
     assert [n.value for n in extract_numbers("销售额为2328.6美元", skip_trivial=False)] == [2328.6]
     assert nums("2025年Q4的值为2328.6，2025.03.01 起统计") == ["2328.6"]
     assert nums("在2023的基础上") == []
+
+
+def test_claim_ordinals_do_not_need_evidence():
+    evidence = "  Country  revenue\n0     USA   523.06\n1  Canada   303.96"
+    assert unsupported_numbers("收入前 5 名中美国最高，为 523.06", evidence) == []

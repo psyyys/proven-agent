@@ -65,12 +65,14 @@ class Embedder(Protocol):
 
 
 class OpenAICompatibleChat:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, http_client=None):
         from openai import AsyncOpenAI
 
         if not settings.llm_api_key:
-            raise RuntimeError("PROVEN_LLM_API_KEY is not set. Copy .env.example to .env and fill it in.")
-        self.client = AsyncOpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url, max_retries=3)
+            raise RuntimeError("没有配置 PROVEN_LLM_API_KEY：请复制 .env.example 为 .env 并填入 API Key")
+        self.client = AsyncOpenAI(
+            api_key=settings.llm_api_key, base_url=settings.llm_base_url, max_retries=3, http_client=http_client
+        )
         self.model = settings.llm_model
         self.temperature = settings.llm_temperature
 

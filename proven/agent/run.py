@@ -24,6 +24,7 @@ class Run:
     findings: FindingRegistry = field(default_factory=FindingRegistry)
     cell_ids: list[str] = field(default_factory=list)
     report: str = ""
+    pending_question: str = ""  # set when the agent paused to ask the user something
     check: dict[str, Any] | None = None
     usage: dict[str, int] = field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "llm_calls": 0})
     _approval: asyncio.Future | None = None

@@ -47,6 +47,11 @@ class Orchestrator:
             else:
                 draft = await self._execute(ctx, system, plan)
                 if run.status == "needs_input":
+                    # Keep the exchange so the user's next message is read as the answer.
+                    session.history += [
+                        {"role": "user", "content": run.question},
+                        {"role": "assistant", "content": f"在继续分析之前需要你确认：{run.pending_question}"},
+                    ]
                     return self._finish(ctx, "needs_input")
                 if run.cancelled:
                     return self._finish(ctx, "cancelled")

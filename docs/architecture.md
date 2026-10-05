@@ -1,6 +1,6 @@
-# 架构设计（草案 v0.2）
+# 架构设计（v0.3）
 
-> 状态：讨论中，未开始编码。项目名待定。
+> 状态：第一版已实现。项目名：**Proven**。本文档描述当前实现；与原计划不同的地方在第 17 节列出。
 
 ## 1. 定位
 
@@ -50,7 +50,7 @@ flowchart TB
     subgraph STORE["存储"]
         Trace[("追溯日志<br/>SQLite · OTel 兼容")]
         Files[("上传文件 / 产物")]
-        VDB[("向量库<br/>Chroma")]
+        VDB[("向量索引<br/>NumPy · 磁盘缓存")]
     end
 
     FE <--> API
@@ -78,8 +78,8 @@ flowchart TB
 | 模型接入 | `openai` SDK + OpenAI 兼容接口 | 百炼、DeepSeek 都兼容，换模型只改配置 | 各家专用 SDK |
 | 代码执行 | 执行器接口 + 第一版实现：本地 Jupyter 内核（`jupyter_client`），带超时 / 资源限制 | 有状态：变量跨步骤保留；每个代码单元天然就是一条追溯记录。抽象成接口，后续可换 Docker / E2B（参考 smolagents、TaskWeaver） | 每次起新进程（丢状态）；直接上 Docker（第一版太重） |
 | 数据查询 | pandas + **DuckDB** | DuckDB 直接用 SQL 查 CSV/Excel/Parquet，处理大文件快；SQL 是信息系统方向的加分项 | 只用 pandas |
-| RAG | Chroma（向量）+ BM25（jieba 中文分词）+ RRF 融合 + 重排模型 | 混合检索对中文专业术语更准，可以展示检索技术；每段原文有 ID，可引用 | 只用向量检索 |
-| 文档解析 | 版面感知解析（MinerU / Docling 二选一，实测后定） | 规范、年报里大量表格和公式，解析质量决定 RAG 上限（参考 RAGFlow 的 DeepDoc） | 纯文本抽取（表格会被打散） |
+| RAG | 向量（NumPy 余弦相似度，Embedding 按内容哈希缓存）+ BM25（jieba 中文分词）+ RRF 融合 + 重排模型 | 混合检索对中文专业术语更准，可以展示检索技术；每段原文有 ID，可引用。单机几万段以内 NumPy 足够，少一个重依赖 | Chroma（依赖较重，规模大了再换）；只用向量检索 |
+| 文档解析 | 第一版：pypdf / python-docx 文本抽取 + 按标题和句子切块；计划升级为版面感知解析（MinerU / Docling） | 规范、年报里大量表格和公式，解析质量决定 RAG 上限（参考 RAGFlow 的 DeepDoc） | — |
 | Embedding / 重排 | 百炼 text-embedding、gte-rerank | 和你已有的 API 套餐一致 | — |
 | 后端 | FastAPI + SSE | 流式推送每一步事件，前端实时显示 | WebSocket（第一版不需要双向） |
 | 前端 | **React + Vite + Tailwind + shadcn/ui** | 你在意交互，这是自由度最高的方案 | Streamlit / Gradio（快，但交互定制能力弱，做不出时间线和可点击溯源） |
@@ -151,7 +151,6 @@ flowchart LR
 | `search_knowledge` | RAG 检索，返回带 ID 的原文片段 |
 | `lookup_semantic` | 查数据字典 / 指标定义（如"复购率"的口径） |
 | `recall_experience` | 检索经验库中相似问题的已验证代码 |
-| `make_chart` | 生成 Plotly 图表并登记为产物 |
 | `record_finding` | 登记结论及其证据 |
 | `ask_user` | 遇到歧义时向用户提问，而不是瞎猜 |
 
@@ -205,30 +204,37 @@ packs/water/
 
 | 领域 | 数据集 | 用途 |
 |---|---|---|
-| 商业 | Olist 巴西电商（多表关联） | 信息系统方向：多表 SQL、数据质量 |
-| 商业 | UCI Online Retail II | RFM 分群、留存、复购 |
-| 商业 | 上市公司年报（PDF） | RAG 知识库 |
-| 水利 | CAMELS 流域水文气象数据 | 降雨径流、时间序列分析 |
-| 水利 | USGS 流量站数据 | 洪水频率分析 |
-| 水利 | 水文规范 / 流域资料 | RAG 知识库（仅本地使用，不入库） |
+| 商业 | Chinook 数字音乐商店（11 张表，MIT） | 信息系统方向：多表 SQL、数据质量、RFM |
+| 水利 | CAMELS 流域属性（671 个流域） | 流域特征对比、相关分析 |
+| 水利 | CAMELS 逐日水文气象（4 个流域，2000-2002） | 径流深、径流系数、降雨径流 |
+| 水利 | USGS 年最大洪峰（01594440 站，2000-2018） | P-III 洪水频率分析 |
+| 两者 | 项目自编的方法说明文档 | RAG 知识库（正式规范有版权，不随项目发布） |
 
-许可证在正式使用前逐一确认。
+原计划的 Olist、UCI 数据集需要登录或无稳定下载地址，改用以上可脚本化下载的公开数据。
 
 ## 12. 目录结构
 
 ```
-backend/
-├── agent/        # 核心：编排器、计划、执行循环、上下文管理
-├── llm/          # 模型适配器
-├── tools/        # 工具注册表 + 通用工具
-├── sandbox/      # Jupyter 内核代码执行
-├── rag/          # 解析、切块、索引、混合检索、重排
-├── trace/        # 追溯事件、结论登记、防幻觉检查
-├── packs/        # 领域插件（business/、water/）
-└── api/          # FastAPI 路由、SSE
-frontend/         # React 应用
-evals/            # 测试题与评测脚本
-docs/             # 设计文档
+proven/
+├── agent/          # 编排器（计划→执行→报告→核查）、会话、单次运行状态、提示词
+├── llm.py          # 模型适配器
+├── tools/          # 工具注册表 + 内置工具
+├── sandbox/        # 执行器接口 + Jupyter 内核实现
+├── rag/            # 解析、切块、混合检索、重排
+├── findings.py     # 结论登记、证据检查、报告数字核查
+├── semantic.py     # 语义层
+├── experience.py   # 经验库
+├── trace.py        # 追溯事件（SQLite + 实时订阅 + OTel 导出）
+├── kit/            # 预加载到内核的辅助函数：core / business / water
+├── packs/          # 领域包：general / business / water（测试题在各包的 evals/ 下）
+├── evals.py        # 评测
+├── notebook.py     # Notebook 导出
+├── service.py      # 会话与运行管理（API、CLI、评测共用）
+├── api/            # FastAPI 路由、SSE
+└── cli.py          # proven serve / ask / eval
+frontend/           # React + Vite + Tailwind
+scripts/            # 数据下载、离线演示
+tests/              # 测试
 ```
 
 ## 13. 第一版范围
@@ -266,4 +272,21 @@ docs/             # 设计文档
 
 - [x] 水利子方向：水资源 / 水文
 - [x] 商业子方向：信息系统
-- [ ] 项目名称
+- [x] 项目名称：Proven
+
+## 17. 实现与原计划的差异
+
+| 原计划 | 实际 | 原因 |
+|---|---|---|
+| 向量库用 Chroma | NumPy + 磁盘缓存，接口不变 | 单机规模够用，少一个重依赖；规模大了可替换 |
+| 版面感知 PDF 解析 | 第一版用 pypdf 文本抽取 | 先跑通全流程，解析器升级不影响 Chunk 格式 |
+| `make_chart` 工具 | 合并进 `run_python`：图表输出自动捕获 | 少一个工具，模型更少出错；图表照样有单元编号可引用 |
+| 领域工具在后端注册 | 领域函数预加载到内核（`proven/kit/`），在代码里调用 | 调用过程本身就是可见、可复现的代码，追溯更完整 |
+| Olist / UCI 数据 | Chinook / CAMELS / USGS | 见第 11 节 |
+
+## 18. 核查规则细节
+
+- **数字提取**：识别千分位、小数、科学计数、`%`、`万`、`亿`、`个百分点`；跳过日期（2023年3月、2023-01-05、Q4、年份）、引用标记、列表序号，以及 10 以内的整数（多为序数，如"前 5 名"）
+- **匹配**：按书写精度允许四舍五入误差（写 23.4% 可以对应 0.2341 或 23.43）；百分数和小数互相换算
+- **登记检查**：结论中的数字必须出现在所引用单元的输出（stdout、表格、文本）或文档片段中
+- **报告检查**：报告中的数字必须对应某条已登记结论，或出现在用户问题、计划中；引用的 F 编号必须存在。第一次不通过会把问题列表交给模型重写一次，第二次仍不通过就在界面上标红
