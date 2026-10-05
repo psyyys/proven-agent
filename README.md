@@ -28,23 +28,30 @@
 
 需要 Python 3.11+ 和 Node.js 20+。
 
+**macOS / Linux：**
+
 ```bash
-# 1. 安装后端
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e ".[dev]"
-
-# 2. 配置模型
-cp .env.example .env               # Windows: copy .env.example .env
-# 编辑 .env，填入 API Key 和模型名
-
-# 3. 下载示例数据（公开数据集，约 10 MB）
-python scripts/fetch_datasets.py
-
-# 4. 构建前端
+cp .env.example .env               # 编辑 .env，填入 API Key 和模型名
+python scripts/fetch_datasets.py   # 下载示例数据（公开数据集，约 10 MB）
 cd frontend && npm install && npm run build && cd ..
+proven serve
+```
 
-# 5. 启动
+**Windows（PowerShell，逐行执行）：**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1          # 若提示"禁止运行脚本"，先执行：Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+pip install -e ".[dev]"
+copy .env.example .env             # 用记事本编辑 .env，填入 API Key 和模型名
+python scripts\fetch_datasets.py
+cd frontend
+npm install                        # 国内网络慢可先执行：npm config set registry https://registry.npmmirror.com
+npm run build
+cd ..
 proven serve
 ```
 
