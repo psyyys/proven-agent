@@ -103,6 +103,8 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--only", nargs="*", help="只运行指定编号的题目")
     e.add_argument("--references-only", action="store_true", help="只计算标准答案（不调用模型）")
 
+    sub.add_parser("doctor", help="检查模型配置与网络连接")
+
     args = ap.parse_args(argv)
     if args.cmd == "serve":
         import uvicorn
@@ -112,6 +114,10 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_ask(args))
     elif args.cmd == "eval":
         asyncio.run(_eval(args))
+    elif args.cmd == "doctor":
+        from .doctor import main as doctor_main
+
+        return doctor_main()
 
 
 if __name__ == "__main__":

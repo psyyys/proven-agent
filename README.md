@@ -69,6 +69,8 @@ PROVEN_EMBED_MODEL=text-embedding-v4   # 留空则只用关键词检索
 # PROVEN_RERANK_MODEL=gte-rerank-v2    # 可选
 ```
 
+配置好后可以运行 `proven doctor` 检查：它会逐步检查配置、代理、域名解析、模型调用和工具调用，出错时显示具体原因。
+
 用 DeepSeek 官方接口时，把地址改成 `https://api.deepseek.com`，模型改成对应的模型 ID 即可。模型需要支持工具调用（function calling）。
 
 ### 没有 API Key 也想看看界面

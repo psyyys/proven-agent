@@ -65,7 +65,7 @@ class Orchestrator:
             self._finish(ctx, "cancelled")
             raise
         except Exception as e:  # noqa: BLE001 - surface any failure to the UI instead of dying silently
-            ctx.emit(T.RUN_FINISHED, status="error", error=f"{type(e).__name__}: {e}")
+            ctx.emit(T.RUN_FINISHED, status="error", error=describe_error(e))
             run.status = "error"
             return run
 
@@ -248,6 +248,26 @@ class Orchestrator:
         ctx.run.status = status
         ctx.emit(T.RUN_FINISHED, status=status, usage=ctx.run.usage)
         return ctx.run
+
+
+def describe_error(e: BaseException) -> str:
+    """Error text including the underlying causes, e.g. 'APIConnectionError: Connection error.
+    ← ConnectError: [Errno 11001] getaddrinfo failed', plus a hint for common setup mistakes."""
+    parts, seen = [], set()
+    cur: BaseException | None = e
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        parts.append(f"{type(cur).__name__}: {cur}")
+        cur = cur.__cause__ or cur.__context__
+    text = " ← ".join(parts)
+    name = type(e).__name__
+    if name == "APIConnectionError":
+        text += "（连不上模型服务：请检查 PROVEN_LLM_BASE_URL 是否正确、代理/VPN 设置，可运行 proven doctor 诊断）"
+    elif name == "AuthenticationError":
+        text += "（API Key 无效或与接口地址不匹配）"
+    elif name == "NotFoundError":
+        text += "（模型名或接口地址不存在：请检查 PROVEN_LLM_MODEL）"
+    return text
 
 
 def _compact(messages: list[dict[str, Any]]) -> None:
