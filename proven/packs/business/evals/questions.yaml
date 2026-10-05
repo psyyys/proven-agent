@@ -1,0 +1,89 @@
+# Each question's reference answer is computed by answer_code (run in a fresh kernel with the dataset
+# loaded); it must set `answer` to a number or a list of numbers. A run passes when every reference
+# number matches a number in the agent's recorded findings (relative tolerance `tol`).
+dataset: chinook
+questions:
+  - id: b01
+    type: basic
+    question: 数据库里一共有多少位客户？
+    answer_code: answer = len(Customer)
+
+  - id: b02
+    type: basic
+    question: 2025 年的总销售额是多少美元？
+    answer_code: |
+      d = Invoice.copy(); d["InvoiceDate"] = pd.to_datetime(d["InvoiceDate"])
+      answer = round(d.loc[d.InvoiceDate.dt.year == 2025, "Total"].sum(), 2)
+
+  - id: b03
+    type: aggregate
+    question: 哪个国家的客户贡献的销售额最高？金额是多少？
+    answer_code: answer = round(Invoice.merge(Customer, on="CustomerId").groupby("Country")["Total"].sum().max(), 2)
+
+  - id: b04
+    type: aggregate
+    question: 全部发票的客单价（平均每张发票金额）是多少？
+    answer_code: answer = round(Invoice.Total.sum() / Invoice.InvoiceId.nunique(), 2)
+
+  - id: b05
+    type: aggregate
+    question: 销量最高的音乐流派是哪个？卖出了多少首曲目？
+    answer_code: |
+      m = InvoiceLine.merge(Track[["TrackId", "GenreId"]], on="TrackId")
+      answer = int(m.groupby("GenreId")["Quantity"].sum().max())
+
+  - id: b06
+    type: multistep
+    question: 业绩最好的销售支持代表负责的客户一共带来了多少销售额？
+    answer_code: |
+      m = Invoice.merge(Customer, on="CustomerId")
+      answer = round(m.groupby("SupportRepId")["Total"].sum().max(), 2)
+
+  - id: b07
+    type: multistep
+    question: 2024 年到 2025 年销售额的同比增长率是多少？
+    answer_code: |
+      d = Invoice.copy(); d["y"] = pd.to_datetime(d["InvoiceDate"]).dt.year
+      s = d.groupby("y")["Total"].sum()
+      answer = round((s[2025] - s[2024]) / s[2024] * 100, 2)
+    tol: 0.02
+
+  - id: b08
+    type: multistep
+    question: 消费金额排名前 10 的客户合计贡献了总销售额的百分之多少？
+    answer_code: |
+      s = Invoice.groupby("CustomerId")["Total"].sum().sort_values(ascending=False)
+      answer = round(s.head(10).sum() / s.sum() * 100, 2)
+    tol: 0.02
+
+  - id: b09
+    type: domain
+    question: 发票口径和明细口径计算的总销售额是否一致？分别是多少？
+    answer_code: |
+      a = round(Invoice.Total.sum(), 2); b = round((InvoiceLine.UnitPrice * InvoiceLine.Quantity).sum(), 2)
+      answer = [a, b]
+
+  - id: b10
+    type: domain
+    question: 检查 InvoiceLine 到 Track 的外键完整性，有多少条孤立记录？
+    answer_code: answer = int((~InvoiceLine.TrackId.isin(Track.TrackId)).sum())
+
+  - id: b11
+    type: domain
+    question: 有多少首曲目从来没有被卖出过？
+    answer_code: answer = int((~Track.TrackId.isin(InvoiceLine.TrackId)).sum())
+
+  - id: b12
+    type: trap
+    question: 每位客户的年龄和性别分布是怎样的？
+    expect: refuse
+
+  - id: b13
+    type: trap
+    question: 2025 年各渠道（线上、门店）的退货率分别是多少？
+    expect: refuse
+
+  - id: b14
+    type: rag
+    question: 什么是参照完整性？它被破坏会对关联查询的统计结果造成什么影响？
+    expect: doc
