@@ -16,12 +16,16 @@
 | 💬 追问老师 | 对批改有疑问可以继续提问，或让老师出针对性练习 |
 | 📝 模考 | Task 1 / Task 2 计时模拟考试 |
 | 📈 记录 | 历史练习、常见错误统计，以及「AI 分析我的弱点」 |
+| ⚡ 打字特效 | 类似 VS Code Power Mode：光标处粒子、连击计数、震动，可选按键音；练习框下方一键开关 |
 
 ## 使用方法
 
 需要 [Node.js](https://nodejs.org/) 18 或以上版本，不需要安装任何依赖。
 
 ```bash
+# 0. 进入项目文件夹（本项目位于仓库的 ielts-writing/ 目录下）
+cd ielts-writing
+
 # 1. 配置 API（也可以跳过这步，启动后在网页右上角「设置」里填写）
 cp .env.example .env
 #    然后编辑 .env，填入 API_BASE_URL、API_KEY、MODEL
@@ -47,12 +51,15 @@ npm start          # 或 node server.js
 
 ## 文件结构
 
+以下路径都在 `ielts-writing/` 文件夹内：
+
 ```
 server.js            本地服务：提供网页 + 转发请求到你的 API（Key 不会暴露给浏览器以外的地方）
 public/index.html    页面
 public/app.js        练习流程、批改展示、提示词
 public/curriculum.js 学习路线与教程内容（想加单元或改教程就改这里）
 public/style.css     样式
+public/powermode.js  打字特效（粒子、连击、震动、按键音）
 ```
 
 练习记录和进度保存在浏览器的 localStorage 中，换浏览器或清除网站数据会丢失。
