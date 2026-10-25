@@ -112,7 +112,7 @@ cd frontend && npm run dev
                              search_knowledge · recall_experience · record_finding · ask_user
 ```
 
-详细设计见 [docs/architecture.md](docs/architecture.md)。
+详细设计见 [docs/architecture.md](docs/architecture.md)，代码阅读顺序见 [docs/code-guide.md](docs/code-guide.md)。
 
 ## 项目结构
 

@@ -2,6 +2,24 @@
 
 > 状态：第一版已实现。项目名：**Proven**。本文档描述当前实现；与原计划不同的地方在第 17 节列出。
 
+## 范式
+
+一句话：**Plan-and-Execute + CodeAct 式 ReAct + 工具化 RAG + 证据约束与程序化核验**。
+
+| 层 | 范式 | 一句话解释 | 代码 |
+|---|---|---|---|
+| ① 规划 | Plan-and-Execute | 先列计划给人确认，再执行 | `agent/orchestrator.py` `_plan()` |
+| ② 执行 | ReAct | 思考 → 调工具 → 看结果，循环 | `agent/orchestrator.py` `_execute()` |
+| ③ 动作 | CodeAct | 模型的主要动作是写 Python 代码并运行（Wang et al., 2024, *Executable Code Actions Elicit Better LLM Agents*） | `sandbox/`、`tools/builtin.py` `run_python()` |
+| ④ 知识 | Agentic RAG | 模型需要时自己调用检索，而不是每次都先检索 | `rag/`、`tools/builtin.py` `search_knowledge()` |
+| ⑤ 防编造 | 证据约束 + 程序化核验 | 结论必须绑定证据；由程序而不是模型核对报告里的每个数字 | `findings.py`、`tools/builtin.py` `record_finding()` |
+
+①–④ 是业界常见做法，⑤ 是本项目的特色。工具调用的底层机制是 Function Calling（用 JSON Schema 描述工具）。
+
+计划中的多 Agent 版本只替换第 ② 层：Orchestrator-Workers（调度器按计划逐步派出上下文独立的分析员）+ Reflection（审核员检查方法与逻辑），流程由代码控制而不是模型自由对话。①③④⑤ 不变。
+
+代码阅读顺序见 [code-guide.md](code-guide.md)。
+
 ## 1. 定位
 
 一个**可追溯的数据分析型 Agent**，带 RAG 能力，网页交互。
