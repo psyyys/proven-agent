@@ -313,7 +313,10 @@ function mountPractice(root, { key, unitId, title, exercise: ex }) {
       <textarea class="answer" spellcheck="false" placeholder="在这里用英文作答…（Ctrl/⌘ + Enter 提交）"></textarea>
       <div class="row between bar">
         <span class="muted small"><span class="wc">0 词</span><span class="clock"></span></span>
-        <button data-act="submit">提交批改</button>
+        <div class="row">
+          <button class="ghost small fx-toggle" data-act="fx" title="打字特效开关">⚡ 特效</button>
+          <button data-act="submit">提交批改</button>
+        </div>
       </div>
     </section>
     <div class="feedback"></div>`;
@@ -415,8 +418,17 @@ function mountPractice(root, { key, unitId, title, exercise: ex }) {
   textarea.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit();
   });
+  const fxBtn = $('[data-act=fx]', root);
+  const syncFx = () => fxBtn.classList.toggle('on', window.PowerMode.get().power);
+  syncFx();
+
   root.addEventListener('click', (e) => {
     const act = e.target.dataset.act;
+    if (act === 'fx') {
+      window.PowerMode.set({ power: !window.PowerMode.get().power });
+      syncFx();
+      textarea.focus();
+    }
     if (act === 'new') newQuestion();
     if (act === 'custom') customQuestion();
     if (act === 'submit') submit();
@@ -807,8 +819,14 @@ function setupSettings() {
 
   $('#open-settings').onclick = () => {
     fill();
+    const fx = window.PowerMode.get();
+    $('#fx-power').checked = fx.power;
+    $('#fx-sound').checked = fx.sound;
     dialog.showModal();
   };
+  // 特效开关即时生效，不需要点保存
+  $('#fx-power').onchange = (e) => window.PowerMode.set({ power: e.target.checked });
+  $('#fx-sound').onchange = (e) => window.PowerMode.set({ sound: e.target.checked });
   dialog.addEventListener('close', () => {
     if (dialog.returnValue === 'save') {
       store.set('config', read());

@@ -192,6 +192,30 @@ dialog::backdrop { background: rgba(0, 0, 0, .4); }
 .settings-form label { display: block; margin: 12px 0; font-weight: 600; font-size: .92rem; }
 .settings-form input { margin-top: 4px; font-weight: normal; }
 
+/* 打字特效 */
+.fx-canvas { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
+.fx-combo {
+  position: fixed; z-index: 51; pointer-events: none; transform: translateX(-100%);
+  display: flex; flex-direction: column; align-items: flex-end; opacity: 0; transition: opacity .3s;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; color: var(--accent);
+}
+.fx-combo.show { opacity: .9; }
+.fx-combo small { font-size: .7rem; letter-spacing: .2em; }
+.fx-combo b { font-size: 2.2rem; line-height: 1; }
+.fx-combo i { display: block; height: 3px; width: 100%; min-width: 60px; background: var(--accent); margin-top: 4px; border-radius: 2px; align-self: stretch; }
+.fx-combo.pop b { animation: fx-pop .18s ease-out; }
+@keyframes fx-pop { from { transform: scale(1.45); } to { transform: scale(1); } }
+.fx-shout {
+  position: fixed; z-index: 51; pointer-events: none; transform: translateX(-100%);
+  font-weight: 800; font-size: 1.3rem; color: var(--warn); white-space: nowrap;
+  animation: fx-shout 1.2s ease-out forwards;
+}
+@keyframes fx-shout { 0% { opacity: 0; transform: translate(-100%, 10px) scale(.8); } 20% { opacity: 1; transform: translate(-100%, 0) scale(1.1); } 100% { opacity: 0; transform: translate(-100%, -30px) scale(1); } }
+.fx-toggle { opacity: .55; }
+.fx-toggle.on { opacity: 1; background: var(--accent-soft); }
+.settings-form label.check { display: flex; gap: 8px; align-items: center; font-weight: normal; margin: 6px 0; }
+.settings-form label.check input { width: auto; margin: 0; }
+
 @media (max-width: 600px) {
   .topbar { padding: 8px 12px; }
   nav a { padding: 4px 8px; }

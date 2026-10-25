@@ -43,6 +43,9 @@
         <input name="model" placeholder="例如 deepseek-chat / gpt-4o-mini / qwen-plus">
       </label>
       <p id="test-result" class="muted"></p>
+      <h3>打字特效</h3>
+      <label class="check"><input type="checkbox" id="fx-power"> ⚡ 粒子 + 连击 + 震动（类似 VS Code Power Mode）</label>
+      <label class="check"><input type="checkbox" id="fx-sound"> 🔊 按键音</label>
       <div class="row end">
         <button type="button" id="test-conn" class="ghost">测试连接</button>
         <button value="cancel" class="ghost">关闭</button>
@@ -51,6 +54,7 @@
     </form>
   </dialog>
 
+  <script src="powermode.js"></script>
   <script src="curriculum.js"></script>
   <script src="app.js"></script>
 </body>
