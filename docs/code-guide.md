@@ -91,6 +91,8 @@ pytest tests/test_agent_e2e.py -v
 
 `service.py`（会话管理）、`api/app.py`（网页接口）、`cli.py`（命令行）、`evals.py`（评测）、`frontend/`（界面）。
 
+前端的关键是 `frontend/src/lib/derive.ts`：后端推送的是一条条事件（`run.started`、`tool.call`、`cell.executed`……），`deriveRun()` 把事件序列转换成界面需要的状态（时间线条目、结论、报告、用量）。界面本身不保存分析状态，所以历史运行可以通过重放事件完整还原。
+
 ## 动手练习
 
 读代码最快的办法是改一点东西，看测试有什么变化。

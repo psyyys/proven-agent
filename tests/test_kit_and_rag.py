@@ -50,3 +50,16 @@ def test_semantic_lookup():
     names = [e.name for e in layer.lookup("客单价怎么算", {"chinook"})]
     assert any(n.startswith("客单价") for n in names)
     assert "InvoiceLine.InvoiceId -> Invoice.InvoiceId" in layer.summary({"chinook"})
+
+
+def test_profile_is_strict_json_with_missing_strings(tmp_path):
+    import json
+
+    from proven.kit import core
+
+    f = tmp_path / "t.csv"
+    f.write_text("id,company,score\n1,,1.5\n2,Acme,\n", encoding="utf-8")
+    name = core.load_table(str(f))
+    p = core.profile(name)
+    json.dumps(p, allow_nan=False)  # raises on NaN / inf
+    assert p["sample"][0]["company"] is None and p["sample"][1]["score"] is None

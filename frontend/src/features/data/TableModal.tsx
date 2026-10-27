@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
-import type { TableProfile } from "../types";
-import { DataTable } from "./CellView";
+import type { TableProfile } from "../../lib/types";
+import { DataTable } from "../analysis/CellView";
 
 export function TableModal({ profile, onClose }: { profile: TableProfile; onClose: () => void }) {
   const fmt = (v: number | null | undefined) => (v === null || v === undefined ? "" : v.toLocaleString(undefined, { maximumFractionDigits: 3 }));

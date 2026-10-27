@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Code2, TriangleAlert } from "lucide-react";
-import type { Cell, CellOutput } from "../types";
-import { Plot } from "./Plot";
+import type { Cell, CellOutput } from "../../lib/types";
+import { Plot } from "../../ui/Plot";
 
 export function DataTable({ table, maxRows = 12 }: { table: { columns: string[]; rows: Record<string, unknown>[] }; maxRows?: number }) {
   const rows = table.rows.slice(0, maxRows);
@@ -42,8 +42,12 @@ function Output({ o }: { o: CellOutput }) {
   return <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">{o.text}</pre>;
 }
 
-export function CellView({ cell, defaultOpen = false }: { cell: Cell; defaultOpen?: boolean }) {
+export function CellView({ cell, defaultOpen = false, signal }: { cell: Cell; defaultOpen?: boolean; signal?: { open: boolean; nonce: number } }) {
   const [open, setOpen] = useState(defaultOpen);
+  // "Expand / collapse all" from the timeline toolbar overrides the local state.
+  useEffect(() => {
+    if (signal && signal.nonce > 0) setOpen(signal.open);
+  }, [signal?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div id={`cell-${cell.cell_id}`} className="rounded-lg border border-line bg-panel">
       <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted hover:text-ink">

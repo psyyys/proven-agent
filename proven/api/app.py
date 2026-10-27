@@ -35,6 +35,30 @@ class Approval(BaseModel):
     plan: dict[str, Any] | None = None
 
 
+class SettingsPatch(BaseModel):
+    mode: str | None = None
+    step_budget: int | None = None
+    max_steps: int | None = None
+    llm_temperature: float | None = None
+    tool_output_chars: int | None = None
+    cell_timeout: int | None = None
+
+
+class KnowledgeQuery(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+# Runtime-adjustable settings and their allowed ranges. Changes last until the server restarts.
+SETTING_LIMITS = {
+    "step_budget": (3, 30),
+    "max_steps": (5, 80),
+    "llm_temperature": (0.0, 1.5),
+    "tool_output_chars": (1000, 20000),
+    "cell_timeout": (10, 600),
+}
+
+
 def create_app(service: Service | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -74,6 +98,81 @@ def create_app(service: Service | None = None) -> FastAPI:
             "embedding": bool(s.embedder),
             "rerank": bool(s.reranker),
         }
+
+    def settings_view(s: Service) -> dict[str, Any]:
+        st = s.settings
+        from urllib.parse import urlparse
+
+        return {
+            "model": st.llm_model,
+            "base_url_host": urlparse(st.llm_base_url).hostname if st.llm_base_url else None,
+            "embed_model": st.embed_model if s.embedder else None,
+            "rerank_model": st.rerank_model if s.reranker else None,
+            "mode": st.mode,
+            "step_budget": st.step_budget,
+            "max_steps": st.max_steps,
+            "llm_temperature": st.llm_temperature,
+            "tool_output_chars": st.tool_output_chars,
+            "cell_timeout": st.cell_timeout,
+            "limits": SETTING_LIMITS,
+        }
+
+    @app.get("/api/settings")
+    async def get_settings(request: Request):
+        return settings_view(svc(request))
+
+    @app.patch("/api/settings")
+    async def patch_settings(request: Request, body: SettingsPatch):
+        s = svc(request)
+        changes = body.model_dump(exclude_none=True)
+        if "mode" in changes and changes["mode"] not in ("single", "multi"):
+            raise HTTPException(400, "mode 只能是 single 或 multi")
+        for key, value in changes.items():
+            if key in SETTING_LIMITS:
+                lo, hi = SETTING_LIMITS[key]
+                if not lo <= value <= hi:
+                    raise HTTPException(400, f"{key} 应在 {lo}–{hi} 之间")
+            setattr(s.settings, key, value)
+        if "llm_temperature" in changes and s._model is not None and hasattr(s._model, "temperature"):
+            s._model.temperature = changes["llm_temperature"]
+        return settings_view(s)
+
+    @app.get("/api/history")
+    async def history(request: Request, limit: int = 50):
+        from ..trace_export import list_runs
+
+        live = svc(request).runs
+        return [{**r, "live": r["run_id"] in live} for r in list_runs(svc(request).trace, limit=min(limit, 200))]
+
+    @app.get("/api/experiences")
+    async def experiences(request: Request, pack: str):
+        return [e.to_dict() for e in svc(request).experience.all(pack)]
+
+    @app.delete("/api/experiences/{exp_id}")
+    async def delete_experience(request: Request, exp_id: int):
+        if not svc(request).experience.delete(exp_id):
+            raise HTTPException(404, "经验不存在")
+        return {"ok": True}
+
+    @app.get("/api/evals")
+    async def eval_reports(request: Request):
+        out_dir = svc(request).settings.workspace / "evals"
+        items = []
+        for f in sorted(out_dir.glob("*.json"), reverse=True) if out_dir.exists() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            items.append({"name": f.stem, "pack": data.get("pack"), "model": data.get("model"), "mode": data.get("mode", "single"),
+                          "time": data.get("time"), "summary": data.get("summary")})
+        return items
+
+    @app.get("/api/evals/{name}")
+    async def eval_report(request: Request, name: str):
+        f = svc(request).settings.workspace / "evals" / f"{Path(name).name}.json"
+        if not f.exists():
+            raise HTTPException(404, "评测报告不存在")
+        return json.loads(f.read_text(encoding="utf-8"))
 
     @app.get("/api/packs")
     async def packs(request: Request):
@@ -122,6 +221,20 @@ def create_app(service: Service | None = None) -> FastAPI:
         if name not in session.profiles:
             raise HTTPException(404, "表不存在")
         return session.profiles[name]
+
+    @app.get("/api/sessions/{sid}/tables/{name}/rows")
+    async def table_rows(request: Request, sid: str, name: str, offset: int = 0, limit: int = 100):
+        session = get_session(request, sid)
+        try:
+            return await session.table_rows(name, max(offset, 0), min(max(limit, 1), 500))
+        except KeyError as e:
+            raise HTTPException(404, "表不存在") from e
+
+    @app.post("/api/sessions/{sid}/knowledge/search")
+    async def knowledge_search(request: Request, sid: str, body: KnowledgeQuery):
+        session = get_session(request, sid)
+        hits = await session.kb.search(body.query, top_k=min(max(body.top_k, 1), 20))
+        return {"vector": session.kb.vector_enabled, "rerank": bool(session.kb.reranker), "hits": [h.to_dict() for h in hits]}
 
     @app.get("/api/sessions/{sid}/chunks/{chunk_id}")
     async def chunk(request: Request, sid: str, chunk_id: str):
@@ -201,8 +314,10 @@ def create_app(service: Service | None = None) -> FastAPI:
 
     @app.get("/api/runs/{rid}/events")
     async def events(request: Request, rid: str, after: int = 0):
-        get_run(request, rid)
         store = svc(request).trace
+        live = rid in svc(request).runs
+        if not live and not store.events(rid):
+            raise HTTPException(404, "分析不存在")
 
         async def stream():
             q = store.subscribe(rid)
@@ -213,6 +328,8 @@ def create_app(service: Service | None = None) -> FastAPI:
                     yield _sse(e)
                     if e.type == T.RUN_FINISHED:
                         return
+                if not live:  # a run from an earlier server process: replay only
+                    return
                 while True:
                     if await request.is_disconnected():
                         return

@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Bot,
+  Brain,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Check,
   CircleAlert,
   CircleHelp,
@@ -20,8 +23,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import type { RunView, TimelineItem } from "../derive";
-import type { Plan } from "../types";
+import type { RunView, TimelineItem } from "../../lib/derive";
+import type { Plan } from "../../lib/types";
+import { cx, Segmented } from "../../ui/kit";
 import { CellView } from "./CellView";
 
 const TOOL_LABEL: Record<string, { label: string; icon: any }> = {
@@ -61,7 +65,7 @@ function PlanEditor({ plan, onApprove, onCancel }: { plan: Plan; onApprove: (p: 
           <button onClick={onCancel} className="rounded-md px-3 py-1.5 text-sm text-muted hover:bg-sunken">
             取消
           </button>
-          <button onClick={() => onApprove({ ...plan, steps })} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 dark:text-black">
+          <button onClick={() => onApprove({ ...plan, steps })} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:opacity-90">
             <Check size={15} /> 确认并执行
           </button>
         </div>
@@ -112,7 +116,7 @@ function PlanCard({ item, onApprove, onCancel }: { item: Extract<TimelineItem, {
   );
 }
 
-function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
+function ToolCard({ item, codeSignal }: { item: Extract<TimelineItem, { kind: "tool" }>; codeSignal: CodeSignal }) {
   const meta = TOOL_LABEL[item.name] ?? { label: item.name, icon: Terminal };
   const Icon = meta.icon;
   const pending = item.ok === undefined;
@@ -150,7 +154,7 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
         <span className="truncate text-muted">{subtitle}</span>
       </div>
       <div className="ml-8 space-y-2">
-        {item.cell && <CellView cell={item.cell} defaultOpen={item.cell.error !== null} />}
+        {item.cell && <CellView cell={item.cell} defaultOpen={codeSignal.open || item.cell.error !== null} signal={codeSignal} />}
         {item.hits && (
           <div className="space-y-1.5">
             {item.hits.map((h) => (
@@ -190,7 +194,7 @@ const STEP_STATUS: Record<string, { label: string; cls: string }> = {
 function StepHeader({ item }: { item: Extract<TimelineItem, { kind: "step" }> }) {
   const st = item.status ? STEP_STATUS[item.status] : null;
   return (
-    <div className="mt-2 rounded-xl border border-line bg-sunken/60 px-4 py-3">
+    <div id={`step-${item.task}`} className="mt-2 scroll-mt-14 rounded-xl border border-line bg-sunken/60 px-4 py-3">
       <div className="flex items-center gap-2 text-sm">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
           <Bot size={14} />
@@ -220,107 +224,204 @@ function StepHeader({ item }: { item: Extract<TimelineItem, { kind: "step" }> })
   );
 }
 
+export type CodeSignal = { open: boolean; nonce: number };
+export type TimelineFilter = "all" | "code" | "findings" | "retrieval" | "errors";
+
+const RETRIEVAL_TOOLS = new Set(["search_knowledge", "lookup_semantic", "recall_experience", "inspect_data"]);
+
+function visible(item: TimelineItem, filter: TimelineFilter, showReasoning: boolean): boolean {
+  if (item.kind === "reasoning") return showReasoning && filter === "all";
+  if (["plan", "step", "ask"].includes(item.kind)) return true;
+  switch (filter) {
+    case "all":
+      return true;
+    case "code":
+      return item.kind === "tool" && !!item.cell;
+    case "findings":
+      return (item.kind === "tool" && item.name === "record_finding") || item.kind === "check";
+    case "retrieval":
+      return item.kind === "tool" && RETRIEVAL_TOOLS.has(item.name);
+    case "errors":
+      return (item.kind === "tool" && item.ok === false) || (item.kind === "finished" && item.status === "error") || (item.kind === "check" && !item.check.ok);
+  }
+}
+
+function Reasoning({ text, phase }: { text: string; phase: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-dashed border-line px-3 py-2 text-xs text-muted">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 text-left">
+        <Brain size={13} className="text-accent" />
+        模型思考过程（{phase}）{!open && <span className="ml-1 truncate text-faint">{text.slice(0, 60)}…</span>}
+      </button>
+      {open && <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{text}</p>}
+    </div>
+  );
+}
+
+function StepNav({ steps }: { steps: Extract<TimelineItem, { kind: "step" }>[] }) {
+  if (steps.length === 0) return null;
+  const tone: Record<string, string> = { done: "text-ok", partial: "text-warn", blocked: "text-bad" };
+  return (
+    <div className="flex gap-1 overflow-x-auto scroll-thin">
+      {steps.map((s) => (
+        <button
+          key={s.key}
+          onClick={() => document.getElementById(`step-${s.task}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-panel px-2.5 py-0.5 text-xs hover:border-accent"
+          title={s.summary ?? s.detail}
+        >
+          <span className={cx("font-semibold tabular-nums", s.status ? tone[s.status] : "text-accent")}>{s.task}</span>
+          <span className="max-w-28 truncate">{s.title}</span>
+          {!s.status && <Loader2 size={11} className="animate-spin text-accent" />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Timeline({
   view,
   focus,
   onApprove,
   onCancel,
+  showReasoning,
+  autoScroll,
+  codeOpenByDefault,
 }: {
   view: RunView;
   focus: { id: string; nonce: number } | null;
   onApprove: (p: Plan) => void;
   onCancel: () => void;
+  showReasoning: boolean;
+  autoScroll: boolean;
+  codeOpenByDefault: boolean;
 }) {
   const bottom = useRef<HTMLDivElement>(null);
   const [stick, setStick] = useState(true);
-  const scroller = useRef<HTMLDivElement>(null);
+  const [filter, setFilter] = useState<TimelineFilter>("all");
+  const [codeSignal, setCodeSignal] = useState<CodeSignal>({ open: codeOpenByDefault, nonce: 0 });
 
   useEffect(() => {
-    if (stick && !focus) bottom.current?.scrollIntoView({ block: "end" });
-  }, [view.items.length, stick, focus]);
+    if (autoScroll && stick && !focus && filter === "all") bottom.current?.scrollIntoView({ block: "end" });
+  }, [view.items.length, stick, focus, autoScroll, filter]);
 
   useEffect(() => {
     if (!focus) return;
-    const el = document.getElementById(focus.id);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.remove("flash");
-      void el.offsetWidth;
-      el.classList.add("flash");
-    }
+    setFilter("all");
+    setTimeout(() => {
+      const el = document.getElementById(focus.id);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.remove("flash");
+        void el.offsetWidth;
+        el.classList.add("flash");
+      }
+    }, 30);
   }, [focus]);
 
   const running = !["done", "error", "cancelled", "needs_input"].includes(view.status);
+  const steps = view.items.filter((i): i is Extract<TimelineItem, { kind: "step" }> => i.kind === "step");
+  const errors = view.items.filter((i) => visible(i, "errors", false) && !["plan", "step", "ask"].includes(i.kind)).length;
+  const items = view.items.filter((i) => visible(i, filter, showReasoning));
 
   return (
-    <div
-      ref={scroller}
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        setStick(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
-      }}
-      className="h-full overflow-y-auto px-6 py-5 scroll-thin"
-    >
-      <div className="mx-auto max-w-3xl space-y-4">
-        <div className="text-lg font-semibold leading-snug">{view.question}</div>
-        {view.items.map((item) => {
-          switch (item.kind) {
-            case "plan":
-              return <PlanCard key={item.key} item={item} onApprove={onApprove} onCancel={onCancel} />;
-            case "step":
-              return <StepHeader key={item.key} item={item} />;
-            case "thought":
-              return (
-                <div key={item.key} className="flex gap-2 text-sm text-muted">
-                  <Lightbulb size={15} className="mt-0.5 shrink-0 text-warn" />
-                  <p className="leading-relaxed">{item.text}</p>
-                </div>
-              );
-            case "tool":
-              return <ToolCard key={item.key} item={item} />;
-            case "ask":
-              return (
-                <div key={item.key} className="rounded-xl border border-accent bg-accent-soft p-4 text-sm">
-                  <div className="mb-1 flex items-center gap-2 font-semibold text-accent">
-                    <CircleHelp size={16} /> 需要你补充信息
-                  </div>
-                  <p>{item.question}</p>
-                  {item.options.length > 0 && <p className="mt-1 text-muted">可选：{item.options.join(" / ")}</p>}
-                  <p className="mt-2 text-xs text-muted">请在左下角输入框中回答，Agent 会接着分析。</p>
-                </div>
-              );
-            case "check":
-              return (
-                <div key={item.key} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${item.check.ok ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"}`}>
-                  {item.check.ok ? <ShieldCheck size={16} /> : <ShieldAlert size={16} />}
-                  <span>
-                    报告数字核查（第 {item.check.attempt} 次）：检查 {item.check.checked} 个数字，
-                    {item.check.ok
-                      ? "全部可溯源"
-                      : `${item.check.unsupported.length} 个没有来源${item.check.attempt === 1 ? "，已退回重写" : ""}`}
-                  </span>
-                </div>
-              );
-            case "finished":
-              return item.status === "error" ? (
-                <div key={item.key} className="flex items-start gap-2 rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad">
-                  <CircleAlert size={16} className="mt-0.5 shrink-0" />
-                  <span>分析出错：{item.error}</span>
-                </div>
-              ) : item.status === "cancelled" ? (
-                <div key={item.key} className="flex items-center gap-2 text-sm text-muted">
-                  <X size={15} /> 已取消
-                </div>
-              ) : null;
-          }
-        })}
-        {running && !view.awaitingApproval && (
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <Loader2 size={15} className="animate-spin text-accent" />
-            {view.phase || "处理中"}…
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-panel/80 px-4 py-2 backdrop-blur">
+        <Segmented
+          size="sm"
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: "all", label: "全部" },
+            { value: "code", label: "代码" },
+            { value: "findings", label: "结论" },
+            { value: "retrieval", label: "检索" },
+            { value: "errors", label: errors ? `问题 ${errors}` : "问题" },
+          ]}
+        />
+        <button onClick={() => setCodeSignal((c) => ({ open: !c.open, nonce: c.nonce + 1 }))} className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted hover:bg-sunken hover:text-ink">
+          {codeSignal.open ? <ChevronsDownUp size={13} /> : <ChevronsUpDown size={13} />}
+          {codeSignal.open ? "收起全部代码" : "展开全部代码"}
+        </button>
+        <span className="ml-auto text-xs text-faint">
+          {view.mode === "multi" ? "多 Agent" : "单 Agent"} · {view.usage.llm_calls} 次调用
+        </span>
+        {steps.length > 0 && (
+          <div className="w-full">
+            <StepNav steps={steps} />
           </div>
         )}
-        <div ref={bottom} className="h-4" />
+      </div>
+      <div
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          setStick(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+        }}
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-5 scroll-thin sm:px-6"
+      >
+        <div className="tl mx-auto max-w-3xl">
+          <div className="text-lg font-semibold leading-snug">{view.question}</div>
+          {items.map((item) => {
+            switch (item.kind) {
+              case "plan":
+                return <PlanCard key={item.key} item={item} onApprove={onApprove} onCancel={onCancel} />;
+              case "step":
+                return <StepHeader key={item.key} item={item} />;
+              case "reasoning":
+                return <Reasoning key={item.key} text={item.text} phase={item.phase} />;
+              case "thought":
+                return (
+                  <div key={item.key} className="flex gap-2 text-sm text-muted">
+                    <Lightbulb size={15} className="mt-0.5 shrink-0 text-warn" />
+                    <p className="leading-relaxed">{item.text}</p>
+                  </div>
+                );
+              case "tool":
+                return <ToolCard key={item.key} item={item} codeSignal={codeSignal} />;
+              case "ask":
+                return (
+                  <div key={item.key} className="rounded-xl border border-accent bg-accent-soft p-4 text-sm">
+                    <div className="mb-1 flex items-center gap-2 font-semibold text-accent">
+                      <CircleHelp size={16} /> 需要你补充信息
+                    </div>
+                    <p>{item.question}</p>
+                    {item.options.length > 0 && <p className="mt-1 text-muted">可选：{item.options.join(" / ")}</p>}
+                    <p className="mt-2 text-xs text-muted">在下方输入框中回答，Agent 会接着分析。</p>
+                  </div>
+                );
+              case "check":
+                return (
+                  <div key={item.key} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${item.check.ok ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"}`}>
+                    {item.check.ok ? <ShieldCheck size={16} /> : <ShieldAlert size={16} />}
+                    <span>
+                      报告数字核查（第 {item.check.attempt} 次）：检查 {item.check.checked} 个数字，
+                      {item.check.ok ? "全部可溯源" : `${item.check.unsupported.length} 个没有来源${item.check.attempt === 1 ? "，已退回重写" : ""}`}
+                    </span>
+                  </div>
+                );
+              case "finished":
+                return item.status === "error" ? (
+                  <div key={item.key} className="flex items-start gap-2 rounded-lg bg-bad-soft px-3 py-2 text-sm text-bad">
+                    <CircleAlert size={16} className="mt-0.5 shrink-0" />
+                    <span>分析出错：{item.error}</span>
+                  </div>
+                ) : item.status === "cancelled" ? (
+                  <div key={item.key} className="flex items-center gap-2 text-sm text-muted">
+                    <X size={15} /> 已取消
+                  </div>
+                ) : null;
+            }
+          })}
+          {filter !== "all" && items.length === 0 && <div className="py-8 text-center text-sm text-faint">这一类暂时没有内容</div>}
+          {running && !view.awaitingApproval && (
+            <div className="flex items-center gap-2 text-sm text-muted">
+              <Loader2 size={15} className="animate-spin text-accent" />
+              {view.phase || "处理中"}…
+            </div>
+          )}
+          <div ref={bottom} className="h-4" />
+        </div>
       </div>
     </div>
   );

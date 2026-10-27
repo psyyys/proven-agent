@@ -1,4 +1,18 @@
-import type { AgentEvent, Health, Pack, Plan, SessionInfo, TableProfile } from "./types";
+import type {
+  AgentEvent,
+  EvalListItem,
+  EvalReport,
+  Experience,
+  Health,
+  HistoryRun,
+  Hit,
+  Pack,
+  Plan,
+  RuntimeSettings,
+  SessionInfo,
+  TableProfile,
+  TableRows,
+} from "./types";
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method };
@@ -15,6 +29,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     } catch {
       /* not JSON */
     }
+    if (res.status >= 500 && detail === res.statusText) detail = `服务端出错（${res.status}），详情见运行 proven serve 的终端`;
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return res.json();
@@ -44,6 +59,18 @@ export const api = {
   verify: (rid: string) => request<{ experience_id: number }>("POST", `/api/runs/${rid}/verify`),
   notebookUrl: (sid: string) => `/api/sessions/${sid}/notebook`,
   logUrl: (rid: string) => `/api/runs/${rid}/log.md`,
+  deleteSession: (sid: string) => fetch(`/api/sessions/${sid}`, { method: "DELETE" }),
+  rows: (sid: string, name: string, offset: number, limit: number) =>
+    request<TableRows>("GET", `/api/sessions/${sid}/tables/${encodeURIComponent(name)}/rows?offset=${offset}&limit=${limit}`),
+  searchKnowledge: (sid: string, query: string, topK: number) =>
+    request<{ vector: boolean; rerank: boolean; hits: Hit[] }>("POST", `/api/sessions/${sid}/knowledge/search`, { query, top_k: topK }),
+  settings: () => request<RuntimeSettings>("GET", "/api/settings"),
+  patchSettings: (patch: Partial<RuntimeSettings>) => request<RuntimeSettings>("PATCH", "/api/settings", patch),
+  history: (limit = 100) => request<HistoryRun[]>("GET", `/api/history?limit=${limit}`),
+  experiences: (pack: string) => request<Experience[]>("GET", `/api/experiences?pack=${encodeURIComponent(pack)}`),
+  deleteExperience: (id: number) => request("DELETE", `/api/experiences/${id}`),
+  evals: () => request<EvalListItem[]>("GET", "/api/evals"),
+  evalReport: (name: string) => request<EvalReport>("GET", `/api/evals/${encodeURIComponent(name)}`),
 };
 
 /** Subscribe to a run's event stream. Reconnects resume after the last seen sequence number. */

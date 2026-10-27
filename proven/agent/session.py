@@ -126,6 +126,22 @@ class Session:
             return []
         return json.loads(r.stdout.strip().splitlines()[-1])
 
+    async def table_rows(self, name: str, offset: int = 0, limit: int = 100) -> dict[str, Any]:
+        """A page of a loaded table, read from the kernel (the table as the agent sees it)."""
+        if name not in self.profiles:
+            raise KeyError(name)
+        code = (
+            "import json as _j\n"
+            f"_t = tables[{name!r}]\n"
+            f"_p = _t.iloc[{int(offset)}:{int(offset) + int(limit)}]\n"
+            "print(_j.dumps({'columns': [str(c) for c in _p.columns], 'total': int(len(_t)), "
+            "'rows': _j.loads(_p.to_json(orient='records', date_format='iso', force_ascii=False))}, ensure_ascii=False))"
+        )
+        r = await self.executor.run(code, record=False)
+        if not r.ok:
+            raise RuntimeError(f"{r.error['name']}: {r.error['value']}")
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
     def describe(self) -> dict[str, Any]:
         return {
             "id": self.id,

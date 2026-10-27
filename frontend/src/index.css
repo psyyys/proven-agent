@@ -7,6 +7,7 @@
   --color-bg: #f7f7f5;
   --color-panel: #ffffff;
   --color-sunken: #f1f1ee;
+  --color-raised: #ffffff;
   --color-line: #e4e4df;
   --color-ink: #1c1d1f;
   --color-muted: #6b6d70;
@@ -19,26 +20,55 @@
   --color-warn-soft: #fdf3e2;
   --color-bad: #b91c1c;
   --color-bad-soft: #fdecec;
+  --color-on-accent: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #121314;
-    --color-panel: #1a1b1d;
-    --color-sunken: #141516;
-    --color-line: #2c2e31;
+  :root:not([data-theme="light"]) {
+    --color-bg: #111213;
+    --color-panel: #18191b;
+    --color-sunken: #131415;
+    --color-raised: #1f2023;
+    --color-line: #2a2c2f;
     --color-ink: #e8e8e6;
     --color-muted: #a2a4a7;
-    --color-faint: #73767a;
+    --color-faint: #707377;
     --color-accent: #2dd4bf;
-    --color-accent-soft: #123430;
+    --color-accent-soft: #10302c;
     --color-ok: #4ade80;
-    --color-ok-soft: #13301d;
+    --color-ok-soft: #12301c;
     --color-warn: #fbbf24;
     --color-warn-soft: #33270f;
     --color-bad: #f87171;
     --color-bad-soft: #3a1717;
+    --color-on-accent: #04211e;
+    color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #111213;
+  --color-panel: #18191b;
+  --color-sunken: #131415;
+  --color-raised: #1f2023;
+  --color-line: #2a2c2f;
+  --color-ink: #e8e8e6;
+  --color-muted: #a2a4a7;
+  --color-faint: #707377;
+  --color-accent: #2dd4bf;
+  --color-accent-soft: #10302c;
+  --color-ok: #4ade80;
+  --color-ok-soft: #12301c;
+  --color-warn: #fbbf24;
+  --color-warn-soft: #33270f;
+  --color-bad: #f87171;
+  --color-bad-soft: #3a1717;
+  --color-on-accent: #04211e;
+  color-scheme: dark;
+}
+
+:root {
+  color-scheme: light;
 }
 
 html,
@@ -115,4 +145,49 @@ body {
   background: var(--color-sunken);
   padding: 0.1em 0.3em;
   border-radius: 4px;
+}
+
+/* ---------- layout helpers ---------- */
+.tl > * + * {
+  margin-top: 1rem;
+}
+[data-density="compact"] .tl > * + * {
+  margin-top: 0.55rem;
+}
+[data-density="compact"] .dense-pad {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+.resize-handle {
+  width: 6px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 5;
+}
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  border-radius: 2px;
+  transition: background 0.15s;
+}
+.resize-handle:hover::after,
+.resize-handle[data-active="true"]::after {
+  background: var(--color-accent);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pop-in {
+  animation: pop-in 0.16s ease-out;
 }

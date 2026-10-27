@@ -99,7 +99,8 @@ def profile(name: str, sample_rows: int = 3) -> dict:
             top = s.dropna().astype(str).value_counts().head(3)
             info["top"] = [str(x)[:40] for x in top.index]
         cols.append(info)
-    sample = df.head(sample_rows).map(_jsonable).to_dict(orient="records")
+    # Row by row: DataFrame.map skips missing values in pandas string columns, leaving NaN (invalid JSON).
+    sample = [{str(k): _jsonable(v) for k, v in row.items()} for row in df.head(sample_rows).to_dict(orient="records")]
     return {"name": name, "rows": int(len(df)), "columns": cols, "sample": sample}
 
 

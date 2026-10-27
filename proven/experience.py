@@ -42,6 +42,12 @@ class ExperienceStore:
             self._db.commit()
             return Experience(cur.lastrowid, pack, question, code, ts)
 
+    def delete(self, exp_id: int) -> bool:
+        with self._lock:
+            cur = self._db.execute("DELETE FROM experiences WHERE id=?", (exp_id,))
+            self._db.commit()
+            return cur.rowcount > 0
+
     def all(self, pack: str) -> list[Experience]:
         with self._lock:
             rows = self._db.execute(

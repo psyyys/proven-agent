@@ -124,3 +124,82 @@ export interface RunMeta {
   id: string;
   question: string;
 }
+
+export interface RuntimeSettings {
+  model: string;
+  base_url_host: string | null;
+  embed_model: string | null;
+  rerank_model: string | null;
+  mode: "single" | "multi";
+  step_budget: number;
+  max_steps: number;
+  llm_temperature: number;
+  tool_output_chars: number;
+  cell_timeout: number;
+  limits: Record<string, [number, number]>;
+}
+
+export interface HistoryRun {
+  run_id: string;
+  time: string;
+  question: string;
+  pack: string;
+  model: string;
+  status: string;
+  tokens: number;
+  llm_calls: number;
+  live: boolean;
+}
+
+export interface Experience {
+  id: number;
+  pack: string;
+  question: string;
+  code: string;
+  created: number;
+}
+
+export interface EvalSummary {
+  total: number;
+  passed: number;
+  accuracy_pct: number;
+  by_type: Record<string, string>;
+  avg_llm_calls: number;
+  total_tokens: number;
+  avg_seconds: number;
+}
+
+export interface EvalListItem {
+  name: string;
+  pack: string;
+  model: string;
+  mode: string;
+  time: string;
+  summary: EvalSummary;
+}
+
+export interface EvalResult {
+  id: string;
+  type: string;
+  question: string;
+  passed: boolean;
+  expected: unknown;
+  got: number[];
+  status: string;
+  note: string;
+  llm_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  seconds: number;
+  run_id: string;
+}
+
+export interface EvalReport extends EvalListItem {
+  results: EvalResult[];
+}
+
+export interface TableRows {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  total: number;
+}

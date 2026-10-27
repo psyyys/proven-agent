@@ -61,7 +61,7 @@ class RunContext:
         return self.session.trace.emit(self.run.id, self.session.id, type, **data)
 
     async def execute(self, code: str, purpose: str = "") -> CellResult:
-        cell = await self.session.executor.run(code)
+        cell = await self.session.executor.run(code, timeout=self.settings.cell_timeout)
         self.session.cells[cell.cell_id] = cell
         self.run.cell_ids.append(cell.cell_id)
         self.emit(T.CELL_EXECUTED, purpose=purpose, **cell.to_dict())

@@ -3,6 +3,7 @@ import type { AgentEvent, Cell, Finding, Hit, Plan, ReportCheck } from "./types"
 export type TimelineItem =
   | { kind: "plan"; key: string; plan: Plan; awaiting: boolean; approved: boolean; edited: boolean }
   | { kind: "thought"; key: string; text: string }
+  | { kind: "reasoning"; key: string; text: string; phase: string }
   | {
       kind: "step";
       key: string;
@@ -46,6 +47,11 @@ export interface RunView {
   usage: { input_tokens: number; output_tokens: number; llm_calls: number };
   phase: string;
   error?: string;
+  mode: string;
+  startedAt: number | null;
+  finishedAt: number | null;
+  calls: { phase: string; task: number | null; input: number; output: number; ms: number }[];
+  toolStats: Record<string, { calls: number; failed: number }>;
 }
 
 export function deriveRun(events: AgentEvent[]): RunView {
@@ -61,6 +67,11 @@ export function deriveRun(events: AgentEvent[]): RunView {
     check: null,
     usage: { input_tokens: 0, output_tokens: 0, llm_calls: 0 },
     phase: "思考中",
+    mode: "single",
+    startedAt: null,
+    finishedAt: null,
+    calls: [],
+    toolStats: {},
   };
   const tools = new Map<string, Extract<TimelineItem, { kind: "tool" }>>();
   let openTool: Extract<TimelineItem, { kind: "tool" }> | null = null;
@@ -70,9 +81,13 @@ export function deriveRun(events: AgentEvent[]): RunView {
     switch (e.type) {
       case "run.started":
         view.question = d.question;
+        view.mode = d.mode ?? "single";
+        view.startedAt = e.ts;
         view.phase = "制定计划";
         break;
       case "llm.call":
+        if (d.reasoning) view.items.push({ kind: "reasoning", key: e.id, text: d.reasoning, phase: d.phase });
+        view.calls.push({ phase: d.phase, task: d.task ?? null, input: d.usage?.input_tokens ?? 0, output: d.usage?.output_tokens ?? 0, ms: d.duration_ms ?? 0 });
         view.usage.llm_calls += 1;
         view.usage.input_tokens += d.usage?.input_tokens ?? 0;
         view.usage.output_tokens += d.usage?.output_tokens ?? 0;
@@ -134,6 +149,9 @@ export function deriveRun(events: AgentEvent[]): RunView {
         if (openTool) openTool.finding = d as Finding;
         break;
       case "tool.result": {
+        const stat = (view.toolStats[d.name] ??= { calls: 0, failed: 0 });
+        stat.calls += 1;
+        if (!d.ok) stat.failed += 1;
         const t = tools.get(d.call_id);
         if (t) Object.assign(t, { ok: d.ok, text: d.text, data: d.data, durationMs: d.duration_ms });
         openTool = null;
@@ -150,6 +168,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
         view.check = d.check;
         break;
       case "run.finished":
+        view.finishedAt = e.ts;
         view.status = d.status;
         view.error = d.error;
         view.phase = "";
