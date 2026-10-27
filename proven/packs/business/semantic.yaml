@@ -1,0 +1,110 @@
+datasets:
+  chinook:
+    description: Chinook 数字音乐商店业务数据库（2021-2025），金额单位为美元。
+    tables:
+      Customer:
+        description: 客户主数据
+        primary_key: CustomerId
+        columns:
+          CustomerId: 客户编号
+          Country: 客户所在国家
+          City: 客户所在城市
+          Company: 所属公司（个人客户为空）
+          SupportRepId: 负责该客户的销售支持代表，对应 Employee.EmployeeId
+      Employee:
+        description: 员工，包含经理和销售支持代表
+        primary_key: EmployeeId
+        columns:
+          EmployeeId: 员工编号
+          Title: 职位（Sales Support Agent 为销售支持代表）
+          ReportsTo: 直属上级的 EmployeeId（总经理为空）
+          HireDate: 入职日期
+      Invoice:
+        description: 发票（订单），一张发票对应一次购买
+        primary_key: InvoiceId
+        columns:
+          InvoiceId: 发票编号
+          CustomerId: 购买客户
+          InvoiceDate: 开票日期（文本格式，分析时间时需转换为日期）
+          BillingCountry: 账单国家
+          Total: 发票总金额（美元）
+      InvoiceLine:
+        description: 发票明细，一行对应发票中的一首曲目
+        primary_key: InvoiceLineId
+        columns:
+          InvoiceId: 所属发票
+          TrackId: 购买的曲目
+          UnitPrice: 成交单价（美元）
+          Quantity: 数量
+      Track:
+        description: 曲目（商品）
+        primary_key: TrackId
+        columns:
+          Name: 曲目名
+          AlbumId: 所属专辑
+          GenreId: 流派
+          MediaTypeId: 媒体格式
+          Milliseconds: 时长（毫秒）
+          Bytes: 文件大小（字节）
+          UnitPrice: 标价（美元）
+      Album:
+        description: 专辑
+        primary_key: AlbumId
+      Artist:
+        description: 艺人
+        primary_key: ArtistId
+      Genre:
+        description: 音乐流派
+        primary_key: GenreId
+      MediaType:
+        description: 媒体格式（MPEG、AAC 等）
+        primary_key: MediaTypeId
+      Playlist:
+        description: 播放列表
+        primary_key: PlaylistId
+      PlaylistTrack:
+        description: 播放列表与曲目的多对多关系表
+    relationships:
+      - InvoiceLine.InvoiceId -> Invoice.InvoiceId
+      - InvoiceLine.TrackId -> Track.TrackId
+      - Invoice.CustomerId -> Customer.CustomerId
+      - Customer.SupportRepId -> Employee.EmployeeId
+      - Employee.ReportsTo -> Employee.EmployeeId
+      - Track.AlbumId -> Album.AlbumId
+      - Track.GenreId -> Genre.GenreId
+      - Track.MediaTypeId -> MediaType.MediaTypeId
+      - Album.ArtistId -> Artist.ArtistId
+      - PlaylistTrack.PlaylistId -> Playlist.PlaylistId
+      - PlaylistTrack.TrackId -> Track.TrackId
+    metrics:
+      - name: 销售额
+        aliases: [收入, 营收, revenue]
+        definition: 一定期间内所有发票金额之和
+        formula: SUM(Invoice.Total)；按明细口径为 SUM(InvoiceLine.UnitPrice * InvoiceLine.Quantity)，两者应一致
+      - name: 订单数
+        aliases: [发票数]
+        definition: 一定期间内的发票数量
+        formula: COUNT(DISTINCT Invoice.InvoiceId)
+      - name: 客单价
+        aliases: [平均订单金额, AOV]
+        definition: 平均每张发票的金额
+        formula: SUM(Invoice.Total) / COUNT(DISTINCT Invoice.InvoiceId)
+      - name: 客户终身价值
+        aliases: [CLV, LTV]
+        definition: 单个客户在整个数据期间内的累计消费金额
+        formula: 按 CustomerId 汇总 SUM(Invoice.Total)
+      - name: 销量
+        aliases: [曲目销量]
+        definition: 售出的曲目数量
+        formula: SUM(InvoiceLine.Quantity)
+      - name: 销售代表业绩
+        definition: 销售支持代表所负责客户（Customer.SupportRepId）的销售额之和
+        formula: Invoice → Customer → Employee 关联后按 EmployeeId 汇总 SUM(Invoice.Total)
+        notes: 业绩归属于客户的负责人，而不是开票时间点的负责人（数据中没有历史变更记录）
+      - name: 同比增长率
+        aliases: [YoY]
+        definition: (本期值 - 上年同期值) / 上年同期值
+        notes: 必须用代码计算并打印，不能心算
+    glossary:
+      销售支持代表: Employee.Title 为 'Sales Support Agent' 的员工，每位客户分配一位
+      活跃客户: 在指定期间内至少有一张发票的客户

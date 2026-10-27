@@ -1,0 +1,35 @@
+id: water
+name: 水利 · 水资源与水文
+description: 水文水资源数据分析：流域特征、降雨径流、洪水频率分析（P-III）。
+kit: proven.kit.water
+datasets:
+  - id: camels_attributes
+    name: CAMELS 流域属性（671 个美国流域）
+    description: 美国 671 个受人类影响较小流域的地形、气候、水文、土壤、植被、地质属性。
+    semantic: camels
+    source: https://github.com/neuralhydrology/neuralhydrology （CAMELS, Addor et al. 2017）
+    license: 公开数据，使用请引用 Addor et al. 2017
+    files:
+      - water/camels_attributes.csv
+  - id: camels_daily
+    name: CAMELS 逐日水文气象（4 个流域，2000-2002）
+    description: 4 个流域的逐日流量（cfs）与 Daymet 流域平均气象（降水、气温、辐射、雪水当量）。
+    semantic: camels
+    source: https://github.com/neuralhydrology/neuralhydrology （CAMELS, Newman et al. 2015）
+    license: 公开数据，使用请引用 Newman et al. 2015
+    files:
+      - water/camels_daily.csv
+      - water/camels_attributes.csv
+  - id: usgs_peaks
+    name: USGS 年最大洪峰（01594440 站，2000-2018）
+    description: 马里兰州 Patuxent River near Bowie 站的年最大洪峰流量序列，可用于洪水频率分析。
+    semantic: usgs_peaks
+    source: https://github.com/DOI-USGS/dataretrieval-python （USGS NWIS）
+    license: 美国政府公开数据
+    files:
+      - water/usgs_peaks_01594440.csv
+examples:
+  - 对 01594440 站的年最大洪峰做 P-III 频率分析，求 100 年一遇设计洪峰
+  - 671 个流域中，干旱指数和径流系数是什么关系？画散点图
+  - 4 个流域 2001 年的年径流深和径流系数分别是多少？
+  - 基流指数最高的 10 个流域有什么共同特征？
