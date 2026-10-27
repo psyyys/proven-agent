@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>雅思写作练习</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✍️</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">✍️ 雅思写作练习</a>
+    <nav>
+      <a href="#/" data-nav="home">学习路线</a>
+      <a href="#/mock" data-nav="mock">模考</a>
+      <a href="#/analyze" data-nav="analyze">句子分析</a>
+      <a href="#/history" data-nav="history">记录</a>
+      <button id="open-settings" class="ghost" title="设置">⚙️ 设置</button>
+    </nav>
+  </header>
+
+  <main id="app"></main>
+
+  <dialog id="settings">
+    <form method="dialog" class="settings-form">
+      <h3>API 设置</h3>
+      <p class="muted">支持任何 OpenAI 兼容接口（DeepSeek、Kimi、通义千问、智谱、OpenAI、中转站等）。这里填写的内容只保存在你的浏览器里；留空则使用服务器 <code>.env</code> 中的配置。</p>
+      <p id="server-status" class="muted"></p>
+      <label>接口地址 Base URL
+        <input name="baseUrl" list="base-presets" placeholder="例如 https://api.deepseek.com/v1">
+      </label>
+      <datalist id="base-presets">
+        <option value="https://api.deepseek.com/v1">DeepSeek</option>
+        <option value="https://api.moonshot.cn/v1">Kimi (Moonshot)</option>
+        <option value="https://dashscope.aliyuncs.com/compatible-mode/v1">通义千问</option>
+        <option value="https://open.bigmodel.cn/api/paas/v4">智谱 GLM</option>
+        <option value="https://api.openai.com/v1">OpenAI</option>
+      </datalist>
+      <label>API Key
+        <input name="apiKey" type="password" autocomplete="off" placeholder="sk-...">
+      </label>
+      <label>模型名 Model
+        <input name="model" placeholder="例如 deepseek-chat / gpt-4o-mini / qwen-plus">
+      </label>
+      <p id="test-result" class="muted"></p>
+      <h3>打字特效</h3>
+      <label class="check"><input type="checkbox" id="fx-power"> ⚡ 粒子 + 连击 + 震动（类似 VS Code Power Mode）</label>
+      <label class="check"><input type="checkbox" id="fx-sound"> 🔊 按键音</label>
+      <div class="row end">
+        <button type="button" id="test-conn" class="ghost">测试连接</button>
+        <button value="cancel" class="ghost">关闭</button>
+        <button value="save" id="save-settings">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="powermode.js"></script>
+  <script src="curriculum.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
