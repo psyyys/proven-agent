@@ -1,7 +1,12 @@
-"""The agent loop: plan -> (approve) -> execute -> verify -> report -> check.
+"""The agent loop: plan -> (approve) -> execute -> report -> check.
 
-Single agent with explicit phases. Each phase is a separate method so it can later become its own
-agent (Planner / Analyst / Reviewer / Writer) without changing tools or the trace format.
+Execution has two modes, chosen per run:
+- single: one ReAct loop works through the whole plan.
+- multi:  the orchestrator (this code, not a model) runs one analyst per plan step. Each analyst
+          starts with a fresh context holding only a handoff card (previous summaries, findings and
+          kernel variables) and ends by submitting a structured result. The kernel, the finding
+          registry and the trace are shared, so nothing has to be re-sent between analysts.
+Both modes use the same ReAct loop, tools and checks.
 """
 
 from __future__ import annotations
@@ -11,13 +16,14 @@ import difflib
 import json
 import re
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from .. import trace as T
 from ..config import Settings
 from ..findings import check_report
 from ..llm import ChatModel, LLMResponse
-from ..tools import ToolRegistry, builtin_tools
+from ..tools import SUBMIT_STEP, ToolRegistry, builtin_tools
 from . import prompts as P
 from .run import Run, RunContext
 from .session import Session
@@ -25,6 +31,13 @@ from .session import Session
 KEEP_FULL_TOOL_RESULTS = 6  # older tool results are shortened to keep the context small
 SHORT_TOOL_RESULT = 600
 SHORT_CODE = 400
+
+
+@dataclass
+class LoopResult:
+    outcome: str  # "answered" | "submitted" | "needs_input" | "cancelled" | "budget"
+    text: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 class Orchestrator:
@@ -38,7 +51,9 @@ class Orchestrator:
     async def run(self, session: Session, run: Run) -> Run:
         ctx = RunContext(session, run, self.settings)
         session.runs[run.id] = run
-        ctx.emit(T.RUN_STARTED, question=run.question, auto_approve=run.auto_approve, model=self.model.model, pack=session.pack.id)
+        run.mode = run.mode or self.settings.mode
+        ctx.emit(T.RUN_STARTED, question=run.question, auto_approve=run.auto_approve, model=self.model.model,
+                 pack=session.pack.id, mode=run.mode)
         try:
             system = self._system_prompt(session)
             plan = await self._plan(ctx, system)
@@ -47,7 +62,10 @@ class Orchestrator:
             if plan.get("answerable", True) is False:
                 draft = f"无法回答：{plan.get('reason', '')}"
             else:
-                draft = await self._execute(ctx, system, plan)
+                if run.mode == "multi":
+                    draft = await self._execute_multi(ctx, system, plan)
+                else:
+                    draft = await self._execute(ctx, system, plan)
                 if run.status == "needs_input":
                     # Keep the exchange so the user's next message is read as the answer.
                     session.history += [
@@ -125,6 +143,7 @@ class Orchestrator:
         return plan
 
     async def _execute(self, ctx: RunContext, system: str, plan: dict[str, Any]) -> str:
+        """Single mode: one ReAct loop for the whole plan."""
         run = ctx.run
         run.status = "running"
         messages: list[dict[str, Any]] = [
@@ -136,56 +155,151 @@ class Orchestrator:
                 "请按计划执行。完成后不再调用工具，用一段话总结你的分析过程和发现。",
             },
         ]
-        nudged = False
-        max_steps = self.settings.max_steps
-        warned = False
-        for step in range(1, max_steps + 1):
+        res = await self._react(
+            ctx,
+            messages,
+            self.tools,
+            budget=self.settings.max_steps,
+            phase="execute",
+            nudge=P.NUDGE_NO_FINDINGS if plan.get("answerable", True) else None,
+            low_budget=P.STEPS_LOW,
+            needs_nudge=lambda: not run.findings.items,
+        )
+        if res.outcome == "needs_input":
+            run.status = "needs_input"
+            return ""
+        if res.outcome == "budget":
+            ctx.emit(T.THOUGHT, text=f"已达到最大步数 {self.settings.max_steps}，基于已有结论生成报告。", step=self.settings.max_steps)
+            return "（达到最大步数，分析可能不完整）"
+        return res.text
+
+    async def _execute_multi(self, ctx: RunContext, system: str, plan: dict[str, Any]) -> str:
+        """Multi mode: one fresh-context analyst per plan step, coordinated by this code."""
+        run = ctx.run
+        run.status = "running"
+        steps = plan.get("steps") or []
+        tools = self.tools.with_tools(SUBMIT_STEP)
+        analyst_system = system + "\n\n" + P.ANALYST_ROLE
+        budget = self.settings.step_budget
+        results: list[dict[str, Any]] = []
+        try:
+            for index, step in enumerate(steps, 1):
+                if run.cancelled:
+                    break
+                ctx.task, ctx.step_findings = index, []
+                usage_before = dict(run.usage)
+                ctx.emit(T.STEP_STARTED, title=step.get("title", ""), detail=step.get("detail", ""), role="analyst", total=len(steps))
+                variables = await ctx.session.kernel_variables()
+                messages = [
+                    {"role": "system", "content": analyst_system},
+                    {"role": "user", "content": P.handoff(run.question, plan, index, results, run.findings.items, variables, budget)},
+                ]
+                res = await self._react(
+                    ctx,
+                    messages,
+                    tools,
+                    budget=budget,
+                    phase="analyst",
+                    nudge=P.STEP_NUDGE,
+                    low_budget=P.STEPS_LOW_ANALYST,
+                    needs_nudge=lambda: True,
+                )
+                result = self._step_result(index, step, res, ctx.step_findings)
+                results.append(result)
+                usage = {k: run.usage[k] - usage_before.get(k, 0) for k in run.usage}
+                ctx.emit(T.STEP_FINISHED, **{k: v for k, v in result.items() if k != "index"}, outcome=res.outcome, usage=usage)
+                if res.outcome == "needs_input":
+                    run.status = "needs_input"
+                    break
+        finally:
+            ctx.task = ctx.step_findings = None
+        return P.step_digest(results)
+
+    @staticmethod
+    def _step_result(index: int, step: dict[str, Any], res: LoopResult, findings: list[str]) -> dict[str, Any]:
+        payload = res.payload
+        if res.outcome == "submitted":
+            status, summary = payload["status"], payload["summary"]
+        elif res.outcome == "answered":
+            status = "done" if findings else "partial"
+            summary = res.text.strip()[:600] or "（未提交总结）"
+        else:
+            status = "partial"
+            summary = {"budget": "达到本步轮数上限，未提交总结。", "cancelled": "已取消。", "needs_input": "等待用户回答。"}.get(res.outcome, "")
+            if findings:
+                summary += f"已登记 {len(findings)} 条结论。"
+        return {
+            "index": index,
+            "title": step.get("title", ""),
+            "status": status,
+            "summary": summary,
+            "findings": list(findings),
+            "variables": payload.get("variables", []),
+            "notes": payload.get("notes", ""),
+        }
+
+    async def _react(
+        self,
+        ctx: RunContext,
+        messages: list[dict[str, Any]],
+        tools: ToolRegistry,
+        budget: int,
+        phase: str,
+        nudge: str | None,
+        low_budget: str,
+        needs_nudge,
+    ) -> LoopResult:
+        """The ReAct loop: think -> call tools -> observe, until the model stops, submits, or runs out of turns."""
+        run = ctx.run
+        nudged = warned = False
+        for step in range(1, budget + 1):
             if run.cancelled:
-                return ""
-            remaining = max_steps - step + 1
+                return LoopResult("cancelled")
+            remaining = budget - step + 1
             if remaining <= 3 and not warned:
                 warned = True
-                messages.append({"role": "user", "content": P.STEPS_LOW.format(remaining=remaining)})
+                messages.append({"role": "user", "content": low_budget.format(remaining=remaining)})
             _compact(messages)
-            resp = await self._call(ctx, messages, phase="execute", tools=self.tools.schemas(), step=step)
+            resp = await self._call(ctx, messages, phase=phase, tools=tools.schemas(), step=step)
             messages.append(resp.as_message())
             if resp.content.strip() and resp.tool_calls:
                 ctx.emit(T.THOUGHT, text=resp.content.strip(), step=step)
 
             if not resp.tool_calls:
-                if not run.findings.items and not nudged and plan.get("answerable", True):
+                if nudge and not nudged and needs_nudge():
                     nudged = True
-                    messages.append({"role": "user", "content": P.NUDGE_NO_FINDINGS})
+                    messages.append({"role": "user", "content": nudge})
                     continue
-                return resp.content
+                return LoopResult("answered", resp.content)
 
             for call in resp.tool_calls:
-                result_text, stop = await self._dispatch(ctx, call, step)
-                messages.append({"role": "tool", "tool_call_id": call.id, "content": result_text})
+                text, stop, finish, data = await self._dispatch(ctx, call, step, tools)
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": text})
                 if stop:
-                    run.status = "needs_input"
-                    return ""
+                    return LoopResult("needs_input")
+                if finish:
+                    return LoopResult("submitted", payload=data.get("submitted", {}))
+        return LoopResult("budget")
 
-        ctx.emit(T.THOUGHT, text=f"已达到最大步数 {self.settings.max_steps}，基于已有结论生成报告。", step=self.settings.max_steps)
-        return "（达到最大步数，分析可能不完整）"
-
-    async def _dispatch(self, ctx: RunContext, call, step: int) -> tuple[str, bool]:
-        tool = self.tools.get(call.name)
+    async def _dispatch(self, ctx: RunContext, call, step: int, tools: ToolRegistry | None = None) -> tuple[str, bool, bool, dict]:
+        tools = tools or self.tools
+        tool = tools.get(call.name)
         ctx.emit(T.TOOL_CALL, name=call.name, arguments=call.arguments, call_id=call.id, step=step)
         started = time.monotonic()
+        stop = finish = False
+        data: dict[str, Any] = {}
         if call.parse_error:
-            text, ok, data, stop = f"工具参数解析失败：{call.parse_error}。请重新调用，参数必须是 JSON 对象。", False, {}, False
+            text, ok = f"工具参数解析失败：{call.parse_error}。请重新调用，参数必须是 JSON 对象。", False
         elif tool is None:
-            close = difflib.get_close_matches(call.name, self.tools.names(), n=1, cutoff=0.6)
+            close = difflib.get_close_matches(call.name, tools.names(), n=1, cutoff=0.6)
             hint = f"你是不是想调用 {close[0]}？" if close else ""
-            text = f"没有名为 {call.name} 的工具。{hint}可用工具：{', '.join(self.tools.names())}"
-            ok, data, stop = False, {}, False
+            text, ok = f"没有名为 {call.name} 的工具。{hint}可用工具：{', '.join(tools.names())}", False
         else:
             try:
                 r = await tool.handler(ctx, call.arguments)
-                text, ok, data, stop = r.text, r.ok, r.data, r.stop
+                text, ok, data, stop, finish = r.text, r.ok, r.data, r.stop, r.finish
             except Exception as e:  # noqa: BLE001 - tool failures go back to the model
-                text, ok, data, stop = f"工具执行异常：{type(e).__name__}: {e}", False, {}, False
+                text, ok = f"工具执行异常：{type(e).__name__}: {e}", False
         ctx.emit(
             T.TOOL_RESULT,
             name=call.name,
@@ -196,7 +310,7 @@ class Orchestrator:
             step=step,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
-        return text, stop
+        return text, stop, finish, data
 
     async def _report(self, ctx: RunContext, draft: str) -> None:
         run = ctx.run

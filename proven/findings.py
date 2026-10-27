@@ -29,6 +29,7 @@ _DATE_PATTERNS = [
     re.compile(r"(?<![0-9.,])(?:19|20)\d{2}(?![0-9.,]|\s*(?:%|％|万|亿))"),  # bare years
     re.compile(r"\d{1,2}:\d{2}(?::\d{2})?"),  # times
 ]
+_DECLINE = re.compile(r"下降|减少|降低|下跌|下滑|回落|减|降|跌|少")
 _LIST_MARKER = re.compile(r"^\s*(?:\d+[.)、]|#+)\s", re.M)
 
 
@@ -135,11 +136,17 @@ def numbers_in_evidence(text: str) -> list[float]:
 def unsupported_numbers(claim: str, evidence_text: str) -> list[str]:
     """Numbers in a claim that do not appear in the evidence output."""
     evidence = numbers_in_evidence(evidence_text)
+    negatives = [-v for v in evidence if v < 0]
     missing = []
     # Small whole numbers ("前 5 名") are skipped, consistent with the report check.
     for n in extract_numbers(claim):
-        if not any(matches(n, v) for v in evidence):
-            missing.append(n.raw)
+        if any(matches(n, v) for v in evidence):
+            continue
+        # "下降 5.64%" for a computed -5.64: accepted only when the claim states the direction,
+        # so "增长 5.64%" for a real decline is still rejected.
+        if _DECLINE.search(claim[max(0, n.start - 8) : n.start]) and any(matches(n, v) for v in negatives):
+            continue
+        missing.append(n.raw)
     return missing
 
 

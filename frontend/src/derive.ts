@@ -4,6 +4,19 @@ export type TimelineItem =
   | { kind: "plan"; key: string; plan: Plan; awaiting: boolean; approved: boolean; edited: boolean }
   | { kind: "thought"; key: string; text: string }
   | {
+      kind: "step";
+      key: string;
+      task: number;
+      total: number;
+      title: string;
+      detail: string;
+      status?: string;
+      summary?: string;
+      findings?: string[];
+      variables?: string[];
+      tokens?: number;
+    }
+  | {
       kind: "tool";
       key: string;
       name: string;
@@ -64,6 +77,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
         view.usage.input_tokens += d.usage?.input_tokens ?? 0;
         view.usage.output_tokens += d.usage?.output_tokens ?? 0;
         if (d.phase === "execute") view.phase = "分析中";
+        if (d.phase === "analyst" && !view.phase.startsWith("第")) view.phase = "分析中";
         if (d.phase === "report" || d.phase === "report_fix") view.phase = "核查报告";
         break;
       case "plan.proposed":
@@ -78,6 +92,22 @@ export function deriveRun(events: AgentEvent[]): RunView {
         view.phase = "分析中";
         const p = view.items.find((i) => i.kind === "plan") as Extract<TimelineItem, { kind: "plan" }> | undefined;
         if (p) Object.assign(p, { plan: d.plan, awaiting: false, approved: true, edited: d.edited });
+        break;
+      }
+      case "step.started":
+        view.phase = `第 ${d.task}/${d.total} 步 · ${d.title}`;
+        view.items.push({ kind: "step", key: e.id, task: d.task, total: d.total, title: d.title, detail: d.detail });
+        break;
+      case "step.finished": {
+        const st = view.items.find((i) => i.kind === "step" && i.task === d.task) as Extract<TimelineItem, { kind: "step" }> | undefined;
+        if (st)
+          Object.assign(st, {
+            status: d.status,
+            summary: d.summary,
+            findings: d.findings,
+            variables: d.variables,
+            tokens: (d.usage?.input_tokens ?? 0) + (d.usage?.output_tokens ?? 0),
+          });
         break;
       }
       case "agent.thought":

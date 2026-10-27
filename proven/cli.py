@@ -18,6 +18,10 @@ def _print_event(e: T.Event) -> None:
         print("\n📋 计划：" + d["plan"].get("understanding", ""))
         for i, s in enumerate(d["plan"].get("steps", []), 1):
             print(f"   {i}. {s['title']} — {s.get('detail', '')}")
+    elif e.type == T.STEP_STARTED:
+        print(f"\n━━ 第 {d['task']}/{d['total']} 步 · {d['title']} · 分析员 ━━")
+    elif e.type == T.STEP_FINISHED:
+        print(f"   ↳ [{d['status']}] {d['summary']}  结论：{', '.join(d['findings']) or '无'}")
     elif e.type == T.THOUGHT:
         print(f"\n💭 {d['text']}")
     elif e.type == T.TOOL_CALL:
@@ -50,7 +54,7 @@ async def _ask(args) -> None:
         for f in args.file or []:
             p = Path(f)
             print(await session.add_upload(p.name, p.read_bytes()))
-        run = svc.start_run(session, args.question)
+        run = svc.start_run(session, args.question, mode=args.mode)
         q = svc.trace.subscribe(run.id)
         task = svc._tasks[run.id]
         while not (task.done() and q.empty()):
@@ -76,7 +80,7 @@ async def _eval(args) -> None:
         return
     svc = Service(settings)
     try:
-        report = await run_eval(svc, args.pack, only=args.only, out_dir=settings.workspace / "evals")
+        report = await run_eval(svc, args.pack, only=args.only, out_dir=settings.workspace / "evals", mode=args.mode)
         print(json.dumps(report["summary"], ensure_ascii=False, indent=1))
         for f in report.get("files", []):
             print("→", f)
@@ -122,11 +126,13 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--pack", default="general")
     a.add_argument("--dataset", action="append", help="加载示例数据集（可重复）")
     a.add_argument("--file", action="append", help="上传本地文件（可重复）")
+    a.add_argument("--mode", choices=["single", "multi"], help="执行模式，默认取 PROVEN_MODE")
 
     e = sub.add_parser("eval", help="运行评测")
     e.add_argument("--pack", required=True)
     e.add_argument("--only", nargs="*", help="只运行指定编号的题目")
     e.add_argument("--references-only", action="store_true", help="只计算标准答案（不调用模型）")
+    e.add_argument("--mode", choices=["single", "multi"], help="执行模式，默认取 PROVEN_MODE；用于对比两种模式")
 
     sub.add_parser("doctor", help="检查模型配置与网络连接")
 

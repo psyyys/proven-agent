@@ -18,6 +18,7 @@ from .session import Session
 class Run:
     question: str
     auto_approve: bool = True
+    mode: str | None = None  # overrides Settings.mode for this run
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
     status: str = "pending"  # pending | planning | awaiting_approval | running | reporting | done | needs_input | cancelled | error
     plan: dict[str, Any] | None = None
@@ -41,6 +42,7 @@ class Run:
             "report": self.report,
             "check": self.check,
             "usage": self.usage,
+            "mode": self.mode,
         }
 
 
@@ -49,8 +51,13 @@ class RunContext:
         self.session = session
         self.run = run
         self.settings = settings
+        # In multi mode, the plan step (1-based) the current analyst works on; tags every event.
+        self.task: int | None = None
+        self.step_findings: list[str] | None = None  # finding ids recorded by the current analyst
 
     def emit(self, type: str, **data: Any) -> T.Event:
+        if self.task is not None:
+            data.setdefault("task", self.task)
         return self.session.trace.emit(self.run.id, self.session.id, type, **data)
 
     async def execute(self, code: str, purpose: str = "") -> CellResult:

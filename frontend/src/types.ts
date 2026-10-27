@@ -19,6 +19,7 @@ export interface Pack {
 export interface Health {
   model: string;
   llm_configured: boolean;
+  mode: "single" | "multi";
   embedding: boolean;
   rerank: boolean;
 }

@@ -78,10 +78,10 @@ export default function App() {
   const pack = packs.find((p) => p.id === packId);
   const running = !!view && !["done", "error", "cancelled", "needs_input"].includes(view.status);
 
-  const ask = async (question: string, confirmPlan: boolean) => {
+  const ask = async (question: string, confirmPlan: boolean, mode: "single" | "multi") => {
     if (!session) return;
     try {
-      const run = await api.startRun(session.id, question, !confirmPlan);
+      const run = await api.startRun(session.id, question, !confirmPlan, mode);
       setRuns((r) => [...r, { id: run.id, question }]);
       setActiveRun(run.id);
       setFocus(null);
@@ -178,6 +178,7 @@ export default function App() {
             }
             onShowTable={(name) => session && api.table(session.id, name).then(setTable).catch(fail)}
             onAsk={ask}
+            defaultMode={health?.mode ?? "single"}
             onStop={() => activeRun && api.cancel(activeRun).catch(fail)}
           />
         </aside>

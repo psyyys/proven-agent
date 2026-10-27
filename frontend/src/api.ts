@@ -37,8 +37,8 @@ export const api = {
     );
   },
   table: (sid: string, name: string) => request<TableProfile>("GET", `/api/sessions/${sid}/tables/${encodeURIComponent(name)}`),
-  startRun: (sid: string, question: string, autoApprove: boolean) =>
-    request<{ id: string }>("POST", `/api/sessions/${sid}/runs`, { question, auto_approve: autoApprove }),
+  startRun: (sid: string, question: string, autoApprove: boolean, mode?: string) =>
+    request<{ id: string }>("POST", `/api/sessions/${sid}/runs`, { question, auto_approve: autoApprove, mode }),
   approve: (rid: string, plan?: Plan) => request("POST", `/api/runs/${rid}/approve`, { plan: plan ?? null }),
   cancel: (rid: string) => request("POST", `/api/runs/${rid}/cancel`),
   verify: (rid: string) => request<{ experience_id: number }>("POST", `/api/runs/${rid}/verify`),

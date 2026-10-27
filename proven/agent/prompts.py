@@ -42,9 +42,9 @@ PLAN = """请根据用户问题和数据情况，制定分析计划。只输出 
   "answerable": true,
   "reason": "如果 answerable 为 false，说明为什么现有数据无法回答",
   "assumptions": ["你做出的假设，可以为空"],
-  "steps": [{"title": "步骤标题（10 字以内）", "detail": "具体做什么"}]
+  "steps": [{"title": "步骤标题（10 字以内）", "detail": "具体做什么", "deliverable": "这一步要登记哪些结论（可选）"}]
 }
-要求：steps 2-6 步；不要包含"写报告"这类步骤；如果数据明显缺少回答问题所需的信息，answerable 设为 false，steps 留空。"""
+要求：steps 2-6 步，每一步应能独立完成并产出可登记的结论；不要包含"写报告"这类步骤；如果数据明显缺少回答问题所需的信息，answerable 设为 false，steps 留空。"""
 
 NUDGE_NO_FINDINGS = (
     "你还没有用 record_finding 登记任何结论。请把回答问题所需的关键数字登记下来"
@@ -121,3 +121,69 @@ def format_findings(findings) -> str:
 
 def plan_to_text(plan: dict[str, Any]) -> str:
     return json.dumps(plan, ensure_ascii=False, indent=1)
+
+
+ANALYST_ROLE = """## 你的角色：分析员
+你只负责分析计划中的**一个步骤**。前面的步骤由其他分析员完成，你只能看到他们的总结、登记的结论和留在内核里的变量；
+你的代码和对话后续步骤也看不到。
+- 直接使用内核里已有的变量，不要重复前面步骤已经做过的计算
+- 只做本步骤的事，不要提前做后面的步骤
+- 关键数字用 record_finding 登记
+- 完成后调用 submit_step 提交：两三句话总结、后续要用的变量名
+"""
+
+HANDOFF = """用户问题：{question}
+
+## 整体计划
+{plan_overview}
+
+## 你负责：第 {index} 步 · {title}
+{detail}{deliverable}
+
+## 前面步骤的交接
+{previous}
+
+## 内核中已有的变量（可以直接使用）
+{variables}
+
+本步最多调用工具 {budget} 轮。完成后调用 submit_step。"""
+
+STEPS_LOW_ANALYST = "提醒：本步只剩 {remaining} 轮。请登记还没登记的关键结论，然后调用 submit_step 提交总结，不要再开始新的计算。"
+
+STEP_NUDGE = "你还没有调用 submit_step。请登记本步的关键结论，然后调用 submit_step 提交总结。"
+
+
+def handoff(question: str, plan: dict[str, Any], index: int, previous: list[dict[str, Any]], findings, variables, budget: int) -> str:
+    steps = plan.get("steps", [])
+    step = steps[index - 1]
+    overview = "\n".join(f"{'→ ' if i == index else '  '}{i}. {s.get('title', '')}" for i, s in enumerate(steps, 1))
+    by_id = {f.id: f for f in findings}
+    prev_lines = []
+    for p in previous:
+        prev_lines.append(f"- 第 {p['index']} 步 {p['title']}（{_STATUS.get(p['status'], p['status'])}）：{p['summary']}")
+        for fid in p["findings"]:
+            if fid in by_id:
+                prev_lines.append(f"    [{fid}] {by_id[fid].claim}")
+        if p.get("notes"):
+            prev_lines.append(f"    提醒：{p['notes']}")
+    var_lines = [f"- `{v['name']}`：{v['desc']}" for v in variables]
+    deliverable = f"\n本步需要交付：{step['deliverable']}" if step.get("deliverable") else ""
+    return HANDOFF.format(
+        question=question,
+        plan_overview=overview,
+        index=index,
+        title=step.get("title", ""),
+        detail=step.get("detail", ""),
+        deliverable=deliverable,
+        previous="\n".join(prev_lines) or "（这是第一步）",
+        variables="\n".join(var_lines) or "（只有已加载的数据表）",
+        budget=budget,
+    )
+
+
+_STATUS = {"done": "完成", "partial": "部分完成", "blocked": "未能完成"}
+
+
+def step_digest(results: list[dict[str, Any]]) -> str:
+    """Analyst summaries, used as the draft for the report writer."""
+    return "\n".join(f"第 {r['index']} 步 {r['title']}（{_STATUS.get(r['status'], r['status'])}）：{r['summary']}" for r in results)

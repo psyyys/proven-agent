@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
+  Bot,
   Check,
   CircleAlert,
   CircleHelp,
@@ -32,6 +33,7 @@ const TOOL_LABEL: Record<string, { label: string; icon: any }> = {
   recall_experience: { label: "查询经验库", icon: History },
   record_finding: { label: "登记结论", icon: Stamp },
   ask_user: { label: "向你提问", icon: CircleHelp },
+  submit_step: { label: "提交本步", icon: Check },
 };
 
 function PlanEditor({ plan, onApprove, onCancel }: { plan: Plan; onApprove: (p: Plan) => void; onCancel: () => void }) {
@@ -116,6 +118,9 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
   const pending = item.ok === undefined;
   const subtitle = item.args.purpose || item.args.query || item.args.question || item.args.table || "";
 
+  // A successful submission is shown in the step header; only a rejected one needs its own card.
+  if (item.name === "submit_step" && item.ok !== false) return null;
+
   if (item.name === "record_finding") {
     const rejected = item.ok === false;
     return (
@@ -176,6 +181,45 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
   );
 }
 
+const STEP_STATUS: Record<string, { label: string; cls: string }> = {
+  done: { label: "完成", cls: "bg-ok-soft text-ok" },
+  partial: { label: "部分完成", cls: "bg-warn-soft text-warn" },
+  blocked: { label: "未能完成", cls: "bg-bad-soft text-bad" },
+};
+
+function StepHeader({ item }: { item: Extract<TimelineItem, { kind: "step" }> }) {
+  const st = item.status ? STEP_STATUS[item.status] : null;
+  return (
+    <div className="mt-2 rounded-xl border border-line bg-sunken/60 px-4 py-3">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
+          <Bot size={14} />
+        </span>
+        <span className="font-semibold">
+          第 {item.task}/{item.total} 步 · {item.title}
+        </span>
+        <span className="text-xs text-faint">分析员 · 全新上下文</span>
+        {st ? (
+          <span className={`ml-auto rounded-full px-2 py-0.5 text-xs ${st.cls}`}>{st.label}</span>
+        ) : (
+          <Loader2 size={14} className="ml-auto animate-spin text-accent" />
+        )}
+      </div>
+      {item.detail && !item.summary && <p className="ml-8 mt-1 text-xs text-muted">{item.detail}</p>}
+      {item.summary && (
+        <div className="ml-8 mt-1.5 space-y-0.5 text-xs text-muted">
+          <p className="text-ink">{item.summary}</p>
+          <p>
+            结论 {item.findings?.length ? item.findings.join("、") : "无"}
+            {item.variables?.length ? ` · 交接变量 ${item.variables.join("、")}` : ""}
+            {item.tokens ? ` · ${item.tokens.toLocaleString()} tokens` : ""}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Timeline({
   view,
   focus,
@@ -223,6 +267,8 @@ export function Timeline({
           switch (item.kind) {
             case "plan":
               return <PlanCard key={item.key} item={item} onApprove={onApprove} onCancel={onCancel} />;
+            case "step":
+              return <StepHeader key={item.key} item={item} />;
             case "thought":
               return (
                 <div key={item.key} className="flex gap-2 text-sm text-muted">

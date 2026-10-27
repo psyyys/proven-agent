@@ -45,6 +45,8 @@ RETRIEVAL = "retrieval"
 FINDING = "finding.recorded"
 ASK_USER = "agent.ask_user"
 REPORT = "report.final"
+STEP_STARTED = "step.started"  # multi mode: an analyst starts one plan step
+STEP_FINISHED = "step.finished"
 CHECK = "report.check"
 
 

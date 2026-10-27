@@ -15,6 +15,7 @@ export function Sidebar({
   onShowTable,
   onAsk,
   onStop,
+  defaultMode,
 }: {
   pack: Pack | undefined;
   session: SessionInfo | null;
@@ -26,11 +27,14 @@ export function Sidebar({
   onLoadDataset: (id: string) => void;
   onUpload: (files: File[]) => void;
   onShowTable: (name: string) => void;
-  onAsk: (q: string, confirmPlan: boolean) => void;
+  onAsk: (q: string, confirmPlan: boolean, mode: "single" | "multi") => void;
+  defaultMode: "single" | "multi";
   onStop: () => void;
 }) {
   const [question, setQuestion] = useState("");
   const [confirmPlan, setConfirmPlan] = useState(true);
+  const [mode, setMode] = useState<"single" | "multi" | null>(null);
+  const effectiveMode = mode ?? defaultMode;
   const fileInput = useRef<HTMLInputElement>(null);
   const loadedDatasets = new Set(session?.tables.map((t) => t.dataset).filter(Boolean));
   const loadedFiles = new Set(session?.tables.map((t) => t.file));
@@ -38,7 +42,7 @@ export function Sidebar({
   const submit = () => {
     const q = question.trim();
     if (!q || canStop) return;
-    onAsk(q, confirmPlan);
+    onAsk(q, confirmPlan, effectiveMode);
     setQuestion("");
   };
 
@@ -184,6 +188,15 @@ export function Sidebar({
               <input type="checkbox" checked={confirmPlan} onChange={(e) => setConfirmPlan(e.target.checked)} className="accent-[var(--color-accent)]" />
               执行前确认计划
             </label>
+            <select
+              value={effectiveMode}
+              onChange={(e) => setMode(e.target.value as "single" | "multi")}
+              title="单 Agent：一个循环完成全部步骤。多 Agent：每个计划步骤派一个上下文独立的分析员"
+              className="rounded border border-line bg-panel px-1 py-0.5 text-xs text-muted outline-none focus:border-accent"
+            >
+              <option value="single">单 Agent</option>
+              <option value="multi">多 Agent</option>
+            </select>
             {canStop ? (
               <button onClick={onStop} title="停止" className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg bg-ink text-panel">
                 <Square size={12} fill="currentColor" />

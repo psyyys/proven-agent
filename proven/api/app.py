@@ -28,6 +28,7 @@ class NewSession(BaseModel):
 class NewRun(BaseModel):
     question: str
     auto_approve: bool = False
+    mode: str | None = None  # "single" | "multi"; defaults to PROVEN_MODE
 
 
 class Approval(BaseModel):
@@ -69,6 +70,7 @@ def create_app(service: Service | None = None) -> FastAPI:
         return {
             "model": st.llm_model,
             "llm_configured": bool(st.llm_api_key),
+            "mode": st.mode,
             "embedding": bool(s.embedder),
             "rerank": bool(s.reranker),
         }
@@ -147,7 +149,9 @@ def create_app(service: Service | None = None) -> FastAPI:
         except RuntimeError as e:
             raise HTTPException(400, str(e)) from e
         try:
-            run = svc(request).start_run(session, body.question.strip(), body.auto_approve)
+            run = svc(request).start_run(session, body.question.strip(), body.auto_approve, body.mode)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         except RuntimeError as e:
             raise HTTPException(409, str(e)) from e
         return run.summary()

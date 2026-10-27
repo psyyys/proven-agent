@@ -111,7 +111,8 @@ def score(q: Question, run, expected: list[float] | None) -> tuple[bool, list[fl
     return not missing, got, f"未找到 {missing}" if missing else ""
 
 
-async def run_eval(service: Service, pack_id: str, only: list[str] | None = None, out_dir: Path | None = None) -> dict[str, Any]:
+async def run_eval(service: Service, pack_id: str, only: list[str] | None = None, out_dir: Path | None = None,
+                   mode: str | None = None) -> dict[str, Any]:
     pack = service.packs[pack_id]
     questions = [q for q in load_questions(pack) if not only or q.id in only]
     refs = await compute_references(service, pack, questions)
@@ -122,7 +123,7 @@ async def run_eval(service: Service, pack_id: str, only: list[str] | None = None
         try:
             if q.dataset:
                 await session.load_demo(q.dataset)
-            run = service.start_run(session, q.question, auto_approve=True)
+            run = service.start_run(session, q.question, auto_approve=True, mode=mode)
             await service.wait(run.id)
             passed, got, note = score(q, run, refs.get(q.id))
             results.append(
@@ -140,11 +141,12 @@ async def run_eval(service: Service, pack_id: str, only: list[str] | None = None
         print(f"  {'✓' if r.passed else '✗'} {r.id} [{r.type}] {r.question[:40]}  {r.note}")
 
     summary = _summarize(results)
-    report = {"pack": pack_id, "model": service.model.model, "time": time.strftime("%Y-%m-%d %H:%M"), "summary": summary,
+    mode = mode or service.settings.mode
+    report = {"pack": pack_id, "model": service.model.model, "mode": mode, "time": time.strftime("%Y-%m-%d %H:%M"), "summary": summary,
               "results": [asdict(r) for r in results]}
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
-        stem = f"{time.strftime('%Y%m%d-%H%M%S')}-{pack_id}-{service.model.model.replace('/', '_')}"
+        stem = f"{time.strftime('%Y%m%d-%H%M%S')}-{pack_id}-{mode}-{service.model.model.replace('/', '_')}"
         (out_dir / f"{stem}.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
         (out_dir / f"{stem}.md").write_text(to_markdown(report), encoding="utf-8")
         report["files"] = [str(out_dir / f"{stem}.json"), str(out_dir / f"{stem}.md")]
@@ -170,7 +172,7 @@ def _summarize(results: list[Result]) -> dict[str, Any]:
 def to_markdown(report: dict[str, Any]) -> str:
     s = report["summary"]
     lines = [
-        f"# 评测报告：{report['pack']} · {report['model']}",
+        f"# 评测报告：{report['pack']} · {report['model']} · {report.get('mode', 'single')} 模式",
         "",
         f"时间：{report['time']}　正确率：**{s['accuracy_pct']}%**（{s['passed']}/{s['total']}）　"
         f"平均模型调用：{s['avg_llm_calls']} 次　总 Token：{s['total_tokens']}　平均耗时：{s['avg_seconds']} 秒",
