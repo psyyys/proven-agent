@@ -63,6 +63,18 @@ pytest tests/test_agent_e2e.py -v
 | 7 | `proven/agent/orchestrator.py` | `_report()` | 核查不通过时，程序怎么让模型重写？ |
 | 8 | `tests/test_findings.py` | 全文 | 每个测试对应一个边界情况 |
 
+### 第 2.5 站：多 Agent 模式（约 30 分钟）
+
+| 顺序 | 文件 | 重点看 | 想清楚的问题 |
+|---|---|---|---|
+| 1 | `proven/agent/orchestrator.py` | `_react()`：单 Agent 和每个分析员共用的 ReAct 循环 | 循环在哪几种情况下结束？ |
+| 2 | `proven/agent/orchestrator.py` | `_execute_multi()`、`_step_result()` | 分析员之间传递了什么，没传递什么？超出轮数时怎么处理？ |
+| 3 | `proven/agent/prompts.py` | `ANALYST_ROLE`、`handoff()` | 交接单里有哪几部分？ |
+| 4 | `proven/tools/builtin.py` | `submit_step()`、`_cell_result()` | 为什么没登记结论就不能标记"完成"？大输出存到哪里？ |
+| 5 | `tests/test_multi_agent.py` | 第一个测试 | 测试怎么证明第二个分析员看不到第一个分析员的代码？ |
+
+设计理由见 [multi-agent.md](multi-agent.md)。
+
 ### 第 3 站：能力层（按兴趣挑着看）
 
 | 文件 | 内容 | 重点 |

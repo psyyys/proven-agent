@@ -22,6 +22,7 @@
 | **可复现** | 整个分析可导出为 Jupyter Notebook，任何人都能重新运行 |
 | **领域插件** | 通用核心 + 可替换的领域包。目前有：通用、商业·信息系统、水利·水资源与水文 |
 | **评测体系** | 每个领域包带测试题，自动计算标准答案并打分，可对比不同模型 |
+| **多 Agent 模式** | 可选：每个计划步骤派一个上下文独立的分析员，通过结构化交接单和共享内核协作，减少上下文膨胀；可与单 Agent 模式在评测集上对比。见 [docs/multi-agent.md](docs/multi-agent.md) |
 | **模型无关** | 走 OpenAI 兼容接口，通义千问、DeepSeek 等切换只改配置 |
 
 ## 快速开始
@@ -89,6 +90,7 @@ proven ask "2021-2025 年每年的销售额是多少？" --pack business --datas
 
 # 跑评测（结果保存在 workspace/evals/）
 proven eval --pack business
+proven eval --pack water --mode multi      # 多 Agent 模式，可与 --mode single 对比
 proven eval --pack water --only w08 w09 w10
 
 # 只计算标准答案，不调用模型
@@ -169,7 +171,7 @@ proven/packs/your_domain/
 - 代码在本地 Jupyter 内核中运行，没有容器隔离，只适合在自己的电脑上使用。公开部署前需要换成 Docker 执行器
 - PDF 解析使用纯文本抽取，表格和公式可能被打散；计划升级为版面感知解析（MinerU / Docling）
 - 数字核查只覆盖数字，不能判断文字结论的逻辑是否正确
-- 单 Agent 架构；多 Agent（计划 / 分析 / 审核 / 撰写分工）在后续版本
+- 多 Agent 模式已实现第 1 期（分析员子代理）；审核员（领域规则校验）和反思员（经验进化）为设计稿，见 [docs/multi-agent.md](docs/multi-agent.md)
 
 ## License
 

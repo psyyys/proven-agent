@@ -16,7 +16,7 @@
 
 ①–④ 是业界常见做法，⑤ 是本项目的特色。工具调用的底层机制是 Function Calling（用 JSON Schema 描述工具）。
 
-计划中的多 Agent 版本只替换第 ② 层：Orchestrator-Workers（调度器按计划逐步派出上下文独立的分析员）+ Reflection（审核员检查方法与逻辑），流程由代码控制而不是模型自由对话。①③④⑤ 不变。
+多 Agent 模式只替换第 ② 层：Orchestrator-Workers（调度器按计划逐步派出上下文独立的分析员，第 1 期已实现）+ Reflection（审核员按领域规则检查，第 2 期）+ Reflexion（反思员从失败中总结经验，第 3 期）。流程由代码控制而不是模型自由对话，①③④⑤ 不变。详见 [multi-agent.md](multi-agent.md)。
 
 代码阅读顺序见 [code-guide.md](code-guide.md)。
 
@@ -284,7 +284,7 @@ tests/              # 测试
 
 ## 15. 向多 Agent 演进
 
-第一版是单 Agent，但内部已经按角色拆分：计划、执行、校验、报告。第二版可以把这些角色拆成独立的 Agent（Planner / Analyst / Reviewer / Writer），由编排器调度。追溯日志和工具系统不用改。
+第 1 期（分析员子代理）已实现，`PROVEN_MODE=multi` 开启；第 2 期审核员、第 3 期反思员为设计稿。完整设计、取舍和评测方法见 [multi-agent.md](multi-agent.md)，领域规则格式见 [domain-rules-template.md](domain-rules-template.md)。
 
 ## 16. 待确认
 
