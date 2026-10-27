@@ -20,22 +20,28 @@
 
 ## 使用方法
 
-需要 [Node.js](https://nodejs.org/) 18 或以上版本，不需要安装任何依赖。
+需要 [Node.js](https://nodejs.org/) 18 或以上版本（装 LTS 版即可），不需要安装任何依赖。
+
+### 最快：双击启动
+
+- **Windows**：双击 `启动.bat`
+- **macOS**：双击 `启动.command`（第一次如果提示无法打开，右键 → 打开）
+
+会弹出一个黑色窗口并自动打开浏览器。**练习时别关这个窗口**，关掉它就停止运行了。
+
+想更方便：Windows 右键 `启动.bat` → 发送到 → 桌面快捷方式；macOS 把 `启动.command` 按住 ⌘+⌥ 拖到桌面生成替身。以后从桌面双击即可。
+
+第一次打开后，点网页右上角 **⚙️ 设置** 填写接口地址、API Key 和模型名，保存后在这个浏览器里会一直记住。
+
+### 命令行启动
 
 ```bash
-# 0. 进入项目文件夹（本项目位于仓库的 ielts-writing/ 目录下）
 cd ielts-writing
-
-# 1. 配置 API（也可以跳过这步，启动后在网页右上角「设置」里填写）
-cp .env.example .env
-#    然后编辑 .env，填入 API_BASE_URL、API_KEY、MODEL
-
-# 2. 启动
-npm start          # 或 node server.js
-
-# 3. 浏览器打开
-#    http://localhost:3000
+npm start          # 启动并自动打开浏览器
+#  浏览器打开 http://localhost:3000
 ```
+
+也可以把 `.env.example` 复制为 `.env`，在里面填写 API 配置，效果和网页「设置」一样。
 
 ### 配置示例
 
@@ -54,6 +60,7 @@ npm start          # 或 node server.js
 以下路径都在 `ielts-writing/` 文件夹内：
 
 ```
+启动.bat / 启动.command  双击启动（Windows / macOS）
 server.js            本地服务：提供网页 + 转发请求到你的 API（Key 不会暴露给浏览器以外的地方）
 public/index.html    页面
 public/app.js        练习流程、批改展示、提示词

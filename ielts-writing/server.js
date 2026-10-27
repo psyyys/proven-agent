@@ -140,8 +140,31 @@ const server = http.createServer((req, res) => {
   res.end();
 });
 
+const URL_HOME = `http://localhost:${PORT}`;
+const shouldOpen = process.argv.includes('--open');
+
+// 用系统默认浏览器打开网页（node server.js --open）
+function openBrowser() {
+  const { exec } = require('child_process');
+  const cmd = process.platform === 'win32' ? `start "" "${URL_HOME}"` : process.platform === 'darwin' ? `open "${URL_HOME}"` : `xdg-open "${URL_HOME}"`;
+  exec(cmd, () => {});
+}
+
+server.on('error', (err) => {
+  // 端口被占用，多半是已经开着一个了：直接打开网页即可
+  if (err.code === 'EADDRINUSE') {
+    console.log(`\n端口 ${PORT} 已被占用，可能已经在运行了：${URL_HOME}`);
+    if (shouldOpen) openBrowser();
+    setTimeout(() => process.exit(0), 1500);
+    return;
+  }
+  throw err;
+});
+
 server.listen(PORT, '127.0.0.1', () => {
   const cfg = resolveConfig();
-  console.log(`\n✍️  雅思写作练习已启动：http://localhost:${PORT}`);
-  console.log(`   接口：${cfg.baseUrl}  模型：${cfg.model}  Key：${cfg.apiKey ? '已配置' : '未配置（可在网页设置中填写）'}\n`);
+  console.log(`\n✍️  雅思写作练习已启动：${URL_HOME}`);
+  console.log(`   接口：${cfg.baseUrl}  模型：${cfg.model}  Key：${cfg.apiKey ? '已配置' : '未配置（可在网页设置中填写）'}`);
+  console.log('   关闭这个窗口即可停止运行\n');
+  if (shouldOpen) openBrowser();
 });
