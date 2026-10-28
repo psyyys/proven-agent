@@ -32,6 +32,8 @@ class Settings:
     # "single": one ReAct loop for the whole plan. "multi": one fresh-context analyst per plan step.
     mode: str = "single"
     step_budget: int = 10  # tool-calling turns per analyst in multi mode
+    # Reviewer: "off"; "rules" (domain rules only, no model call); "full" (rules + model review).
+    review: str = "full"
     cell_timeout: int = 120
     # Max characters of a tool result shown to the model; the full output always stays in the trace.
     tool_output_chars: int = 4000
@@ -54,6 +56,7 @@ class Settings:
             max_steps=int(_env("PROVEN_MAX_STEPS", "40")),
             mode=_env("PROVEN_MODE", "single"),
             step_budget=int(_env("PROVEN_STEP_BUDGET", "10")),
+            review=_env("PROVEN_REVIEW", "full"),
             cell_timeout=int(_env("PROVEN_CELL_TIMEOUT", "120")),
             tool_output_chars=int(_env("PROVEN_TOOL_OUTPUT_CHARS", "4000")),
         )

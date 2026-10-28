@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Activity, BadgeCheck, BarChart3, Copy, Download, FileText, Loader2, ShieldAlert, ShieldCheck, Stamp, ThumbsUp } from "lucide-react";
+import { Activity, BadgeCheck, BarChart3, Copy, Download, FileText, Loader2, ScanSearch, ShieldAlert, ShieldCheck, Stamp, ThumbsUp } from "lucide-react";
 import { figuresOf, type RunView } from "../../lib/derive";
-import type { Finding } from "../../lib/types";
-import { Bar, IconButton, Tabs } from "../../ui/kit";
+import type { Finding, ReviewIssue } from "../../lib/types";
+import { Bar, cx, IconButton, Tabs } from "../../ui/kit";
 import { Plot } from "../../ui/Plot";
+import { IssueRow } from "./IssueRow";
 
 type Tab = "report" | "findings" | "charts" | "usage";
 
@@ -15,6 +16,8 @@ const PHASE_LABEL: Record<string, string> = {
   analyst: "分析员",
   report: "撰写报告",
   report_fix: "报告修订",
+  review: "审核员",
+  redo: "按审核意见修正",
 };
 
 const kfmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n));
@@ -107,15 +110,44 @@ function prepare(markdown: string, view: RunView): string {
   return md;
 }
 
-function FindingChip({ finding, onClick }: { finding?: Finding; onClick: () => void }) {
+function FindingChip({ finding, issues, onClick }: { finding?: Finding; issues: ReviewIssue[]; onClick: () => void }) {
+  const retracted = finding?.status === "retracted";
+  const tone = !finding || retracted || issues.some((i) => i.severity === "error") ? "bad" : issues.length ? "warn" : "ok";
+  const notes = issues.map((i) => `${i.rule_id || "审核员"}：${i.rule_id ? i.name : i.message}`);
+  const title = !finding
+    ? "未知结论"
+    : [finding.claim, `证据：${finding.evidence_id}`, retracted ? `审核后已被 ${finding.replaced_by} 替换` : "", ...notes].filter(Boolean).join("\n");
+  const tones = {
+    ok: "bg-ok-soft text-ok hover:ring-1 hover:ring-ok",
+    warn: "bg-warn-soft text-warn hover:ring-1 hover:ring-warn",
+    bad: "bg-bad-soft text-bad",
+  };
   return (
     <button
       onClick={onClick}
-      title={finding ? `${finding.claim}\n证据：${finding.evidence_id}` : "未知结论"}
-      className={`mx-0.5 inline-flex items-center rounded px-1 align-baseline font-mono text-[0.7rem] font-semibold leading-tight ${finding ? "bg-ok-soft text-ok hover:ring-1 hover:ring-ok" : "bg-bad-soft text-bad"}`}
+      title={title}
+      className={cx("mx-0.5 inline-flex items-center rounded px-1 align-baseline font-mono text-[0.7rem] font-semibold leading-tight", tones[tone], retracted && "line-through")}
     >
       {finding?.id ?? "?"}
+      {issues.length > 0 && !retracted && <sup className="ml-px">!</sup>}
     </button>
+  );
+}
+
+function ReviewSummary({ view }: { view: RunView }) {
+  const errors = view.issues.filter((i) => i.severity === "error").length;
+  const warnings = view.issues.length - errors;
+  const replaced = view.findings.filter((f) => f.status === "retracted").length;
+  if (view.reviewMode === "off") return <div className="rounded-lg bg-sunken px-3 py-2 text-xs text-muted">本次分析没有开启审核员（设置 → 运行参数 → 审核）。</div>;
+  return (
+    <div className={cx("flex items-start gap-2 rounded-lg px-3 py-2 text-xs", errors ? "bg-bad-soft text-bad" : warnings ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok")}>
+      <ScanSearch size={15} className="mt-px shrink-0" />
+      <span>
+        审核员（{view.reviewMode === "full" ? "领域规则 + 模型审核" : "领域规则"}）：
+        {errors || warnings ? `${errors ? `${errors} 个未解决的错误，` : ""}${warnings} 条警告（已写入报告的"假设与局限"）` : "未发现问题"}
+        {replaced ? `；${replaced} 条结论按审核意见更正` : ""}
+      </span>
+    </div>
   );
 }
 
@@ -135,6 +167,12 @@ export function ReportPanel({
   const [tab, setTab] = useState<Tab>("report");
   const figures = useMemo(() => (view ? figuresOf(view) : []), [view]);
   const findingsById = useMemo(() => Object.fromEntries((view?.findings ?? []).map((f) => [f.id, f])), [view]);
+  const issuesOf = useMemo(() => {
+    const m: Record<string, ReviewIssue[]> = {};
+    for (const i of view?.issues ?? []) (m[i.finding_id] ??= []).push(i);
+    return (id: string) => m[id] ?? [];
+  }, [view]);
+  const activeFindings = view?.findings.filter((f) => f.status !== "retracted").length ?? 0;
   const md = useMemo(() => (view?.report ? prepare(view.report, view) : ""), [view]);
 
   const focusFinding = (f?: Finding) => {
@@ -168,7 +206,7 @@ export function ReportPanel({
           onChange={setTab}
           items={[
             { id: "report", label: "报告", icon: <FileText size={15} /> },
-            { id: "findings", label: "结论", icon: <Stamp size={15} />, count: view?.findings.length },
+            { id: "findings", label: "结论", icon: <Stamp size={15} />, count: activeFindings },
             { id: "charts", label: "图表", icon: <BarChart3 size={15} />, count: figures.length },
             { id: "usage", label: "用量", icon: <Activity size={15} /> },
           ]}
@@ -198,7 +236,7 @@ export function ReportPanel({
                   a: ({ href, children }) => {
                     if (href?.startsWith("#finding-")) {
                       const f = findingsById[href.slice(9)];
-                      return <FindingChip finding={f} onClick={() => focusFinding(f)} />;
+                      return <FindingChip finding={f} issues={f ? issuesOf(f.id) : []} onClick={() => focusFinding(f)} />;
                     }
                     if (href?.startsWith("#unsupported-")) {
                       return (
@@ -239,15 +277,30 @@ export function ReportPanel({
         ) : tab === "findings" ? (
           view.findings.length ? (
             <div className="space-y-2">
-              {view.findings.map((f) => (
-                <button key={f.id} onClick={() => focusFinding(f)} className="block w-full rounded-lg border border-line bg-panel px-3 py-2 text-left text-sm hover:border-accent">
-                  <span className="mr-2 font-mono text-xs font-semibold text-ok">{f.id}</span>
-                  {f.claim}
-                  <span className="mt-1 block text-xs text-faint">
-                    证据：{f.evidence_id.split(",").join("、")}
-                  </span>
-                </button>
-              ))}
+              <ReviewSummary view={view} />
+              {view.findings.map((f) => {
+                const retracted = f.status === "retracted";
+                const issues = retracted ? [] : issuesOf(f.id);
+                return (
+                  <div key={f.id} className={cx("rounded-lg border bg-panel text-sm", retracted ? "border-line opacity-60" : issues.length ? "border-warn/40" : "border-line")}>
+                    <button onClick={() => focusFinding(f)} className="block w-full px-3 py-2 text-left hover:text-accent">
+                      <span className={cx("mr-2 font-mono text-xs font-semibold", retracted ? "text-faint" : "text-ok")}>{f.id}</span>
+                      <span className={retracted ? "line-through" : ""}>{f.claim}</span>
+                      <span className="mt-1 block text-xs text-faint">
+                        证据：{f.evidence_id.split(",").join("、")}
+                        {retracted ? ` · 审核后已被 ${f.replaced_by} 替换` : ""}
+                      </span>
+                    </button>
+                    {issues.length > 0 && (
+                      <div className="space-y-1.5 border-t border-line px-3 py-2">
+                        {issues.map((i, k) => (
+                          <IssueRow key={k} issue={i} compact />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <Empty text="还没有登记结论。" />
@@ -272,18 +325,28 @@ export function ReportPanel({
         <div className="flex shrink-0 items-center gap-3 border-t border-line px-4 py-2.5 text-xs">
           {view.check?.ok ? (
             <span className="flex items-center gap-1.5 text-ok">
-              <ShieldCheck size={15} /> 数字核查通过 · {view.check.checked} 个数字均可溯源
+              <ShieldCheck size={15} className="shrink-0" /> 数字核查通过 · {view.check.checked} 个数字均可溯源
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-warn">
               <ShieldAlert size={15} /> {view.check?.unsupported.length ?? 0} 个数字没有来源（已标红）
             </span>
           )}
+          {view.reviewMode !== "off" && (
+            <button
+              onClick={() => setTab("findings")}
+              className={cx("flex shrink-0 items-center gap-1 whitespace-nowrap hover:underline", view.issues.some((i) => i.severity === "error") ? "text-bad" : view.issues.length ? "text-warn" : "text-ok")}
+              title="查看审核意见"
+            >
+              <ScanSearch size={14} />
+              {view.issues.length ? `审核意见 ${view.issues.length}` : "审核通过"}
+            </button>
+          )}
           <button
             onClick={onVerify}
             disabled={verified}
             title="确认这次分析正确，代码会存入经验库，以后遇到相似问题时参考"
-            className="ml-auto flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-muted hover:border-accent hover:text-accent disabled:border-ok/40 disabled:text-ok"
+            className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-line px-2.5 py-1 text-muted hover:border-accent hover:text-accent disabled:border-ok/40 disabled:text-ok"
           >
             {verified ? <BadgeCheck size={14} /> : <ThumbsUp size={14} />}
             {verified ? "已存入经验库" : "分析正确，存入经验库"}

@@ -20,7 +20,10 @@ function Compare({ a, b }: { a: EvalListItem; b: EvalListItem }) {
   const types = [...new Set([...Object.keys(a.summary.by_type), ...Object.keys(b.summary.by_type)])];
   const head = (x: EvalListItem) => (
     <th className="px-3 py-2 text-left font-medium">
-      <div>{x.mode === "multi" ? "多 Agent" : "单 Agent"}</div>
+      <div>
+        {x.mode === "multi" ? "多 Agent" : "单 Agent"}
+        {x.review && x.review !== "off" ? ` · 审核${x.review === "full" ? "（规则 + 模型）" : "（规则）"}` : ""}
+      </div>
       <div className="text-xs font-normal text-faint">
         {x.model} · {x.time}
       </div>
@@ -133,6 +136,7 @@ export function EvalsView() {
               <div className="flex items-center gap-1.5 text-sm">
                 <span className="font-medium">{x.pack}</span>
                 <Badge tone={x.mode === "multi" ? "accent" : "neutral"}>{x.mode === "multi" ? "多 Agent" : "单 Agent"}</Badge>
+                {x.review && x.review !== "off" && <Badge tone="ok">审核{x.review === "full" ? "+模型" : ""}</Badge>}
                 <span className="ml-auto font-semibold tabular-nums">{x.summary.accuracy_pct}%</span>
               </div>
               <div className="truncate text-[0.7rem] text-faint">

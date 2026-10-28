@@ -8,6 +8,10 @@ import type {
   Hit,
   Pack,
   Plan,
+  ReviewEvalListItem,
+  ReviewEvalReport,
+  ReviewEvalSummary,
+  RuleSetInfo,
   RuntimeSettings,
   SessionInfo,
   TableProfile,
@@ -71,6 +75,10 @@ export const api = {
   deleteExperience: (id: number) => request("DELETE", `/api/experiences/${id}`),
   evals: () => request<EvalListItem[]>("GET", "/api/evals"),
   evalReport: (name: string) => request<EvalReport>("GET", `/api/evals/${encodeURIComponent(name)}`),
+  rules: (pack: string) => request<RuleSetInfo>("GET", `/api/packs/${encodeURIComponent(pack)}/rules`),
+  reviewEvals: () => request<ReviewEvalListItem[]>("GET", "/api/review-evals"),
+  reviewEval: (name: string) => request<ReviewEvalReport>("GET", `/api/review-evals/${encodeURIComponent(name)}`),
+  runRulesEval: (pack: string) => request<{ name: string; summary: ReviewEvalSummary }>("POST", `/api/packs/${encodeURIComponent(pack)}/review-eval`),
 };
 
 /** Subscribe to a run's event stream. Reconnects resume after the last seen sequence number. */

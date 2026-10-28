@@ -65,12 +65,16 @@ REPORT = """请根据以下已登记的结论，为用户写一份分析报告�
 ## 分析过程备注
 {draft}
 
+## 审核意见
+{review}
+
 ## 写作要求
 1. 结构：`## 结论` (2-4 句直接回答问题) → `## 主要发现` (分条) → `## 方法与口径` → `## 假设与局限`。
 2. **报告中出现的每个数字都必须来自上面的结论**，写数字的句子末尾标注来源，如 [F2]。不得自行计算新数字（包括差值、比例、合计）。
 3. 需要展示图表时，单独一行写图表编号，如 [C5]。
 4. 语言简洁、专业，面向业务读者；不要复述代码。主要发现 4-8 条，全文一般不超过 2000 字。
 5. 如果问题无法用数据回答，直接说明原因和需要什么数据，不要出现编造的数字。
+6. 审核意见中的每一条都要在"假设与局限"中体现（用读者能懂的话说明影响）；标为"未解决的错误"的结论不能当作确定结论写进"结论"部分。
 """
 
 REPORT_FIX = """报告未通过数字核查：
@@ -114,6 +118,7 @@ def system_prompt(pack_prompt: str, semantic_summary: str, profiles_text: str, d
 
 
 def format_findings(findings) -> str:
+    findings = [f for f in findings if getattr(f, "status", "active") == "active"]
     if not findings:
         return "（无）"
     return "\n".join(f"- [{f.id}] {f.claim}（证据 {f.evidence_id}）" for f in findings)
@@ -157,7 +162,7 @@ def handoff(question: str, plan: dict[str, Any], index: int, previous: list[dict
     steps = plan.get("steps", [])
     step = steps[index - 1]
     overview = "\n".join(f"{'→ ' if i == index else '  '}{i}. {s.get('title', '')}" for i, s in enumerate(steps, 1))
-    by_id = {f.id: f for f in findings}
+    by_id = {f.id: f for f in findings if getattr(f, "status", "active") == "active"}
     prev_lines = []
     for p in previous:
         prev_lines.append(f"- 第 {p['index']} 步 {p['title']}（{_STATUS.get(p['status'], p['status'])}）：{p['summary']}")
@@ -187,3 +192,78 @@ _STATUS = {"done": "完成", "partial": "部分完成", "blocked": "未能完成
 def step_digest(results: list[dict[str, Any]]) -> str:
     """Analyst summaries, used as the draft for the report writer."""
     return "\n".join(f"第 {r['index']} 步 {r['title']}（{_STATUS.get(r['status'], r['status'])}）：{r['summary']}" for r in results)
+
+
+# ---------------------------------------------------------------------- reviewer (phase 2)
+
+REVIEWER_SYSTEM = "你是严谨的数据分析审核员，熟悉统计方法和领域规范。只输出 JSON。"
+
+REVIEW = """你是审核员。分析员完成了分析工作，你要检查登记的结论在方法和表述上是否站得住。
+你看不到分析员的对话，只能看到结论、产生它的代码和输出。结论中的数字是否来自代码输出，程序已经核对过，不需要再核对数字是否抄对。
+
+## 用户问题
+{question}
+
+## 审核范围
+{task}
+
+## 待审核的结论
+{findings}
+
+## 程序规则检查已发现的问题（不要重复提出）
+{rule_issues}
+
+## 检查要点
+1. 方法和口径是否正确：筛选条件、时段、单位、分母，是否与语义层的指标定义一致
+2. 代码是否有会让数字本身出错的问题：多表关联导致重复计数、单位没有换算、缺失值处理不当
+3. 结论是否超出证据能支持的范围：把相关写成因果、把统计平均写成预测、外推过远、以偏概全
+{points}
+
+只输出 JSON，格式：
+{{"issues": [{{"finding": "F3", "severity": "error", "problem": "问题是什么（一两句话）", "suggestion": "怎么改"}}]}}
+- error：结论错误或会严重误导读者，必须重做
+- warning：结论基本成立，但需要补充说明或加限定条件
+- 没有问题时输出 {{"issues": []}}。不要为了挑错而挑错；拿不准的问题最多标 warning。"""
+
+REVIEW_REDO = """审核员退回了本步结果，需要处理以下问题：
+{issues}
+
+处理方式：
+- 结论有错的：修正代码重新计算，用 record_finding 登记更正后的结论，并用 replaces 参数指明替换哪条旧结论（如 replaces="F3"）
+- 结论没错、只是缺少说明的（如样本长度、选样方式、方法、不确定性）：把说明写进结论重新登记，同样用 replaces 替换旧结论
+- 你认为审核意见不成立的：不用修改，在 submit_step 的 notes 中写明理由
+完成后再次调用 submit_step。本轮最多调用工具 {budget} 轮。"""
+
+REVIEW_REDO_SINGLE = REVIEW_REDO.replace("在 submit_step 的 notes 中写明理由", "在最后的总结中写明理由").replace(
+    "完成后再次调用 submit_step。", "完成后不再调用工具，用一段话总结修正情况。"
+)
+
+SEVERITY = {"error": "错误", "warning": "警告"}
+
+
+def format_issue(issue, findings=None) -> str:
+    """One line per issue, for the analyst (redo) and for the report writer."""
+    who = issue.rule_id or "审核员"
+    claim = ""
+    if findings is not None:
+        f = findings.get(issue.finding_id)
+        claim = f"「{f.claim}」" if f else ""
+    text = f"- [{who} · {SEVERITY.get(issue.severity, issue.severity)}] {issue.finding_id}{claim}："
+    text += "；".join(x for x in (issue.detail, issue.message) if x)
+    if issue.suggestion:
+        text += f" 建议：{issue.suggestion}"
+    if issue.basis:
+        text += f"（依据：{issue.basis}）"
+    return text
+
+
+def format_review_for_report(issues, findings) -> str:
+    if not issues:
+        return "（无）"
+    lines = []
+    for i in issues:
+        line = format_issue(i, findings)
+        if i.severity == "error":
+            line = line.replace("· 错误]", "· 未解决的错误]", 1)
+        lines.append(line)
+    return "\n".join(lines)

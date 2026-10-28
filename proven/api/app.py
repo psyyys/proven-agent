@@ -29,6 +29,7 @@ class NewRun(BaseModel):
     question: str
     auto_approve: bool = False
     mode: str | None = None  # "single" | "multi"; defaults to PROVEN_MODE
+    review: str | None = None  # "off" | "rules" | "full"; defaults to PROVEN_REVIEW
 
 
 class Approval(BaseModel):
@@ -37,6 +38,7 @@ class Approval(BaseModel):
 
 class SettingsPatch(BaseModel):
     mode: str | None = None
+    review: str | None = None
     step_budget: int | None = None
     max_steps: int | None = None
     llm_temperature: float | None = None
@@ -109,6 +111,7 @@ def create_app(service: Service | None = None) -> FastAPI:
             "embed_model": st.embed_model if s.embedder else None,
             "rerank_model": st.rerank_model if s.reranker else None,
             "mode": st.mode,
+            "review": st.review,
             "step_budget": st.step_budget,
             "max_steps": st.max_steps,
             "llm_temperature": st.llm_temperature,
@@ -127,6 +130,8 @@ def create_app(service: Service | None = None) -> FastAPI:
         changes = body.model_dump(exclude_none=True)
         if "mode" in changes and changes["mode"] not in ("single", "multi"):
             raise HTTPException(400, "mode 只能是 single 或 multi")
+        if "review" in changes and changes["review"] not in ("off", "rules", "full"):
+            raise HTTPException(400, "review 只能是 off、rules 或 full")
         for key, value in changes.items():
             if key in SETTING_LIMITS:
                 lo, hi = SETTING_LIMITS[key]
@@ -154,6 +159,53 @@ def create_app(service: Service | None = None) -> FastAPI:
             raise HTTPException(404, "经验不存在")
         return {"ok": True}
 
+    @app.get("/api/packs/{pack_id}/rules")
+    async def pack_rules(request: Request, pack_id: str):
+        from ..rules import RuleError
+
+        pack = svc(request).packs.get(pack_id)
+        if pack is None:
+            raise HTTPException(404, "领域包不存在")
+        try:
+            return {"ok": True, **pack.rules().to_dict()}
+        except RuleError as e:
+            return {"ok": False, "error": str(e), "rules": [], "review_points": []}
+
+    @app.get("/api/review-evals")
+    async def review_evals(request: Request):
+        out_dir = svc(request).settings.workspace / "evals" / "review"
+        items = []
+        for f in sorted(out_dir.glob("*.json"), reverse=True) if out_dir.exists() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            items.append({"name": f.stem, "pack": data.get("pack"), "mode": data.get("mode"), "model": data.get("model"),
+                          "time": data.get("time"), "summary": data.get("summary")})
+        return items
+
+    @app.get("/api/review-evals/{name}")
+    async def review_eval(request: Request, name: str):
+        f = svc(request).settings.workspace / "evals" / "review" / f"{Path(name).name}.json"
+        if not f.exists():
+            raise HTTPException(404, "审核测试报告不存在")
+        return json.loads(f.read_text(encoding="utf-8"))
+
+    @app.post("/api/packs/{pack_id}/review-eval")
+    async def run_rules_eval(request: Request, pack_id: str):
+        """Rules-only trap test: no model calls, takes well under a second."""
+        from ..review_eval import run_review_eval
+        from ..rules import RuleError
+
+        pack = svc(request).packs.get(pack_id)
+        if pack is None:
+            raise HTTPException(404, "领域包不存在")
+        try:
+            report = await run_review_eval(pack, out_dir=svc(request).settings.workspace / "evals" / "review")
+        except RuleError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"name": Path(report["files"][0]).stem, "summary": report["summary"]}
+
     @app.get("/api/evals")
     async def eval_reports(request: Request):
         out_dir = svc(request).settings.workspace / "evals"
@@ -164,7 +216,7 @@ def create_app(service: Service | None = None) -> FastAPI:
             except (OSError, ValueError):
                 continue
             items.append({"name": f.stem, "pack": data.get("pack"), "model": data.get("model"), "mode": data.get("mode", "single"),
-                          "time": data.get("time"), "summary": data.get("summary")})
+                          "review": data.get("review", "off"), "time": data.get("time"), "summary": data.get("summary")})
         return items
 
     @app.get("/api/evals/{name}")
@@ -262,7 +314,7 @@ def create_app(service: Service | None = None) -> FastAPI:
         except RuntimeError as e:
             raise HTTPException(400, str(e)) from e
         try:
-            run = svc(request).start_run(session, body.question.strip(), body.auto_approve, body.mode)
+            run = svc(request).start_run(session, body.question.strip(), body.auto_approve, body.mode, body.review)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         except RuntimeError as e:

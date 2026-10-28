@@ -1,6 +1,6 @@
 # 代码阅读指南
 
-核心代码约 1600 行 Python。不用从头到尾读，按下面的顺序读，每一站都能独立看懂。
+核心代码约 2200 行 Python。不用从头到尾读，按下面的顺序读，每一站都能独立看懂。
 
 ## 先看全貌：一次提问经过哪些代码
 
@@ -16,6 +16,7 @@
             │              ├─ run_python()  → sandbox/jupyter.py 运行代码   ← CodeAct
             │              ├─ search_knowledge() → rag/index.py 检索         ← RAG
             │              └─ record_finding() → findings.py 核对证据        ← 证据约束
+            ├─ _review()    审核结论 → rules.py 领域规则 + 模型审核，错误退回一次  ← Reflection
             └─ _report()    写报告 → findings.py check_report() 核查数字      ← 程序化核验
 ```
 
@@ -30,6 +31,7 @@
 | Agentic RAG | 模型需要时自己调用检索 | `tools/builtin.py` → `search_knowledge()`；`rag/index.py` → `search()` |
 | 证据约束 | 结论必须绑定证据，数字必须出现在证据里 | `tools/builtin.py` → `record_finding()`；`findings.py` → `unsupported_numbers()` |
 | 程序化核验 | 程序检查报告里每个数字的来源 | `findings.py` → `check_report()`；`orchestrator.py` → `_report()` |
+| Reflection | 另一个角色检查结论，有错退回重做 | `orchestrator.py` → `_review()`；`rules.py` → `evaluate()`；`agent/review.py` |
 
 ## 阅读顺序
 
@@ -75,6 +77,20 @@ pytest tests/test_agent_e2e.py -v
 
 设计理由见 [multi-agent.md](multi-agent.md)。
 
+### 第 2.6 站：审核员（约 40 分钟，规则部分是你的专业内容）
+
+| 顺序 | 文件 | 重点看 | 想清楚的问题 |
+|---|---|---|---|
+| 1 | `proven/packs/water/rules.yaml` | 全文 | 每条规则拦的是什么错误？依据对不对？阈值你认同吗？ |
+| 2 | `proven/rules.py` | `evaluate()`、`_values_after()`、`find_fact()` | 四种 check 分别怎么判断？"径流系数与干旱指数的相关系数为 -0.75"为什么不会误拦？ |
+| 3 | `proven/agent/orchestrator.py` | `_review()`，以及 `_execute_multi()` 里调用它的部分 | 什么情况下退回？退回给谁？为什么只退回一次？ |
+| 4 | `proven/agent/review.py`、`prompts.py` 的 `REVIEW` | 模型审核员看到了什么 | 为什么把规则已发现的问题也给它看？ |
+| 5 | `proven/tools/builtin.py` | `record_finding()` 的 `replaces` 参数 | 被替换的结论去哪了？报告还能引用它吗？ |
+| 6 | `proven/packs/water/evals/review_cases.yaml`、`proven/review_eval.py` | 陷阱测试 | 拦截率和误拦率分别怎么算？为什么 100% 还不能说明效果？ |
+| 7 | `tests/test_review.py` | 第一个测试 | 一次"退回 → 更正 → 复审"在事件里是什么样子？ |
+
+格式说明见 [domain-rules-template.md](domain-rules-template.md)。
+
 ### 第 3 站：能力层（按兴趣挑着看）
 
 | 文件 | 内容 | 重点 |
@@ -101,6 +117,7 @@ pytest tests/test_agent_e2e.py -v
 2. **加一个工具**：在 `tools/builtin.py` 里仿照 `inspect_data` 写一个 `list_tables`，只返回所有表名，再注册到 `builtin_tools()` 里
 3. **写一个测试**：仿照 `tests/test_agent_e2e.py`，用 `ScriptedChat` 模拟模型在报告里写一个没登记过的数字，断言核查不通过
 4. **加一个水文函数**：在 `kit/water.py` 里加一个计算径流系数的函数，在 `packs/water/prompt.md` 里告诉模型它的用法
+5. **加一条领域规则**：在 `packs/water/rules.yaml` 里加一条你最有把握的规则（比如"多年平均蒸发量不能超过……"），在 `evals/review_cases.yaml` 里加一条该拦的、一条不该拦的用例，运行 `proven review-eval --pack water` 看结果
 
 ## 调试技巧
 

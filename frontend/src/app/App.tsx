@@ -6,6 +6,7 @@ import { EvalsView } from "../features/evals/EvalsView";
 import { ExperienceView } from "../features/experience/ExperienceView";
 import { HistoryView } from "../features/history/HistoryView";
 import { KnowledgeView } from "../features/knowledge/KnowledgeView";
+import { RulesView } from "../features/rules/RulesView";
 import { SettingsView } from "../features/settings/SettingsView";
 import { Workspace } from "../features/analysis/Workspace";
 import { IconButton, ToastProvider } from "../ui/kit";
@@ -56,6 +57,7 @@ function Views() {
       {view === "analysis" && <Workspace />}
       {view === "data" && <DataView />}
       {view === "knowledge" && <KnowledgeView />}
+      {view === "rules" && <RulesView />}
       {view === "experience" && <ExperienceView />}
       {view === "history" && <HistoryView />}
       {view === "evals" && <EvalsView />}

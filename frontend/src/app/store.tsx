@@ -5,7 +5,7 @@ import { usePrefsState, useApplyPrefs, type Prefs } from "../lib/prefs";
 import type { AgentEvent, Health, Pack, RunMeta, RuntimeSettings, SessionInfo } from "../lib/types";
 import { useToast } from "../ui/kit";
 
-export type ViewId = "analysis" | "data" | "knowledge" | "experience" | "history" | "evals" | "settings";
+export type ViewId = "analysis" | "data" | "knowledge" | "rules" | "experience" | "history" | "evals" | "settings";
 
 interface Store {
   view: ViewId;

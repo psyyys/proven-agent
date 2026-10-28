@@ -1,0 +1,68 @@
+# 审核员陷阱测试（商业）。格式见 proven/packs/water/evals/review_cases.yaml
+
+cases:
+  - id: b-r01
+    claim: 2025 年客单价为 -0.42 美元
+    code: "print(round(yearly[2025] - yearly[2024], 2))"
+    evidence: "-0.42"
+    expect: [B001]
+    note: 把变化量当成了客单价本身
+
+  - id: b-r02
+    claim: 客户复购率为 135%
+    expect: [B002]
+    note: 分子按订单数、分母按客户数计算，分子不是分母的子集
+
+  - id: b-r03
+    claim: 美国客户的销售额占比为 122.5%
+    expect: [G005]
+    note: 分母只用了部分国家
+
+  - id: b-c01
+    claim: 销售额同比下降 5.64%
+    expect: [B101]
+    note: 没有说明当期和对比期
+
+  - id: b-s01
+    claim: 2025 年销售额较 2024 年显著下降 5.64%
+    expect: [G002]
+    note: 只有两个年度数值，无法做显著性检验
+
+  - id: b-s02
+    claim: 预计 2026 年销售额为 470 美元
+    expect: [G004]
+    note: 没有说明推算方法
+
+  - id: b-l01
+    claim: 每张发票平均购买 5.4 首歌，说明客户更喜欢购买整张专辑
+    code: "print(round(InvoiceLine.groupby('InvoiceId').size().mean(), 1))"
+    evidence: "5.4"
+    expect: [llm]
+    note: 每单曲目数不能说明是否购买整张专辑
+
+  - id: b-l02
+    claim: 2025 年总销售额为 2328.60 美元
+    code: "print(round(Invoice.merge(InvoiceLine, on='InvoiceId').Total.sum(), 2))"
+    evidence: "2328.60"
+    expect: [llm]
+    note: 发票与明细一对多关联后对发票总额求和，金额被重复计算；而且没有按 2025 年筛选
+
+  - id: b-ok01
+    claim: 2025 年销售额为 450.58 美元，较 2024 年下降 5.64%
+    expect: []
+
+  - id: b-ok02
+    claim: 美国客户的销售额占比为 22.5%，在 24 个国家中最高
+    expect: []
+
+  - id: b-ok03
+    claim: 2025 年销售额同比下降 5.64%（2024 年为 477.53 美元）
+    expect: []
+
+  - id: b-ok04
+    claim: 客户复购率为 100%，所有 59 位客户都有不止一次购买
+    expect: []
+
+  - id: b-ok05
+    claim: 销售额较上年减少 25.3 美元
+    expect: []

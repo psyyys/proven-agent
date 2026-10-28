@@ -7,6 +7,9 @@ Execution has two modes, chosen per run:
           kernel variables) and ends by submitting a structured result. The kernel, the finding
           registry and the trace are shared, so nothing has to be re-sent between analysts.
 Both modes use the same ReAct loop, tools and checks.
+
+After execution (single) or after each step (multi), the reviewer checks the new findings: domain
+rules by code, then optionally a model in a reviewer role. An error sends the work back once.
 """
 
 from __future__ import annotations
@@ -23,8 +26,11 @@ from .. import trace as T
 from ..config import Settings
 from ..findings import check_report
 from ..llm import ChatModel, LLMResponse
+from ..rules import RuleError, RuleSet
 from ..tools import SUBMIT_STEP, ToolRegistry, builtin_tools
 from . import prompts as P
+from . import review as R
+from .review import ReviewResult
 from .run import Run, RunContext
 from .session import Session
 
@@ -52,9 +58,11 @@ class Orchestrator:
         ctx = RunContext(session, run, self.settings)
         session.runs[run.id] = run
         run.mode = run.mode or self.settings.mode
+        run.review_mode = run.review_mode or self.settings.review
         ctx.emit(T.RUN_STARTED, question=run.question, auto_approve=run.auto_approve, model=self.model.model,
-                 pack=session.pack.id, mode=run.mode)
+                 pack=session.pack.id, mode=run.mode, review=run.review_mode)
         try:
+            ctx.rules = self._load_rules(ctx)
             system = self._system_prompt(session)
             plan = await self._plan(ctx, system)
             if run.cancelled:
@@ -142,8 +150,17 @@ class Orchestrator:
             ctx.emit(T.PLAN_APPROVED, plan=plan, edited=edited)
         return plan
 
+    def _load_rules(self, ctx: RunContext) -> RuleSet:
+        if ctx.run.review_mode == "off":
+            return RuleSet([])
+        try:
+            return ctx.session.pack.rules()
+        except RuleError as e:  # a typo in rules.yaml should not stop the analysis
+            ctx.emit(T.THOUGHT, text=f"领域规则文件有误，本次只做模型审核：{e}")
+            return RuleSet([])
+
     async def _execute(self, ctx: RunContext, system: str, plan: dict[str, Any]) -> str:
-        """Single mode: one ReAct loop for the whole plan."""
+        """Single mode: one ReAct loop for the whole plan, then one review of all findings."""
         run = ctx.run
         run.status = "running"
         messages: list[dict[str, Any]] = [
@@ -170,8 +187,25 @@ class Orchestrator:
             return ""
         if res.outcome == "budget":
             ctx.emit(T.THOUGHT, text=f"已达到最大步数 {self.settings.max_steps}，基于已有结论生成报告。", step=self.settings.max_steps)
-            return "（达到最大步数，分析可能不完整）"
-        return res.text
+            draft = "（达到最大步数，分析可能不完整）"
+        else:
+            draft = res.text
+
+        scope = "整个分析：" + "；".join(s.get("title", "") for s in plan.get("steps") or [])
+        review = await self._review(ctx, [f.id for f in run.findings.active()], scope, round_no=1, can_redo=True)
+        if review.errors and not run.cancelled:
+            budget = max(3, min(10, self.settings.max_steps // 4))
+            messages.append({"role": "user", "content": P.REVIEW_REDO_SINGLE.format(issues=self._issue_lines(run, review), budget=budget)})
+            res = await self._react(ctx, messages, self.tools, budget=budget, phase="redo", nudge=None, low_budget=P.STEPS_LOW,
+                                    needs_nudge=lambda: False)
+            if res.outcome == "needs_input":
+                run.status = "needs_input"
+                return ""
+            if res.outcome == "answered" and res.text.strip():
+                draft += "\n\n审核后的修正：" + res.text.strip()
+            review = await self._review(ctx, [f.id for f in run.findings.active()], scope, round_no=2, can_redo=False)
+        run.issues = review.issues
+        return draft
 
     async def _execute_multi(self, ctx: RunContext, system: str, plan: dict[str, Any]) -> str:
         """Multi mode: one fresh-context analyst per plan step, coordinated by this code."""
@@ -204,10 +238,26 @@ class Orchestrator:
                     low_budget=P.STEPS_LOW_ANALYST,
                     needs_nudge=lambda: True,
                 )
-                result = self._step_result(index, step, res, ctx.step_findings)
+                scope = f"第 {index} 步 · {step.get('title', '')}：{step.get('detail', '')}"
+                can_redo = res.outcome not in ("needs_input", "cancelled")
+                review = await self._review(ctx, ctx.step_findings, scope, round_no=1, can_redo=can_redo)
+                redone = False
+                if review.errors and can_redo and not run.cancelled:
+                    # Back to the same analyst, which still has its context, for one more round.
+                    redone = True
+                    redo_budget = max(3, budget // 2)
+                    messages.append({"role": "user", "content": P.REVIEW_REDO.format(issues=self._issue_lines(run, review), budget=redo_budget)})
+                    res2 = await self._react(ctx, messages, tools, budget=redo_budget, phase="redo", nudge=P.STEP_NUDGE,
+                                             low_budget=P.STEPS_LOW_ANALYST, needs_nudge=lambda: True)
+                    if res2.outcome != "budget":
+                        res = res2
+                    review = await self._review(ctx, ctx.step_findings, scope, round_no=2, can_redo=False)
+                run.issues += review.issues
+                result = self._step_result(index, step, res, [f for f in ctx.step_findings if run.findings.get(f).status == "active"])
                 results.append(result)
                 usage = {k: run.usage[k] - usage_before.get(k, 0) for k in run.usage}
-                ctx.emit(T.STEP_FINISHED, **{k: v for k, v in result.items() if k != "index"}, outcome=res.outcome, usage=usage)
+                ctx.emit(T.STEP_FINISHED, **{k: v for k, v in result.items() if k != "index"}, outcome=res.outcome, usage=usage,
+                         review={"errors": len(review.errors), "warnings": len(review.warnings), "redone": redone})
                 if res.outcome == "needs_input":
                     run.status = "needs_input"
                     break
@@ -272,14 +322,43 @@ class Orchestrator:
                     continue
                 return LoopResult("answered", resp.content)
 
-            for call in resp.tool_calls:
+            for i, call in enumerate(resp.tool_calls):
                 text, stop, finish, data = await self._dispatch(ctx, call, step, tools)
                 messages.append({"role": "tool", "tool_call_id": call.id, "content": text})
-                if stop:
-                    return LoopResult("needs_input")
-                if finish:
+                if stop or finish:
+                    # Every tool call needs a result, or the conversation cannot be continued (e.g. after review).
+                    for rest in resp.tool_calls[i + 1 :]:
+                        messages.append({"role": "tool", "tool_call_id": rest.id, "content": "未执行：本轮已提交或暂停。"})
+                    if stop:
+                        return LoopResult("needs_input")
                     return LoopResult("submitted", payload=data.get("submitted", {}))
         return LoopResult("budget")
+
+    async def _review(self, ctx: RunContext, finding_ids: list[str], scope: str, round_no: int, can_redo: bool) -> ReviewResult:
+        """Rule check, then (in full mode) a fresh-context model review of the given findings."""
+        run = ctx.run
+        ids = [f for f in finding_ids if run.findings.get(f) and run.findings.get(f).status == "active"]
+        if run.review_mode == "off" or not ids or run.cancelled:
+            return ReviewResult()
+        ctx.emit(T.REVIEW_STARTED, round=round_no, findings=ids)
+        result = ReviewResult(R.rule_check(ctx.rules, ctx.session, run, ids))
+        if run.review_mode == "full":
+            prompt = R.model_prompt(ctx.session, run, ids, scope, result.issues, ctx.rules)
+            messages = [{"role": "system", "content": P.REVIEWER_SYSTEM}, {"role": "user", "content": prompt}]
+            try:
+                resp = await self._call(ctx, messages, phase="review", json_mode=True)
+                result.issues += R.parse_model_issues(_parse_json(resp.content), ids)
+                result.model_used = True
+            except Exception as e:  # noqa: BLE001 - the rule check still stands without the model
+                ctx.emit(T.THOUGHT, text=f"审核员调用失败，只保留规则检查结果：{describe_error(e)}")
+        action = "final" if round_no > 1 else "redo" if result.errors and can_redo else "accept"
+        ctx.emit(T.REVIEW, round=round_no, findings=ids, issues=[i.to_dict() for i in result.issues], errors=len(result.errors),
+                 warnings=len(result.warnings), model=result.model_used, action=action)
+        return result
+
+    @staticmethod
+    def _issue_lines(run: Run, review: ReviewResult) -> str:
+        return "\n".join(P.format_issue(i, run.findings) for i in review.issues)
 
     async def _dispatch(self, ctx: RunContext, call, step: int, tools: ToolRegistry | None = None) -> tuple[str, bool, bool, dict]:
         tools = tools or self.tools
@@ -321,16 +400,19 @@ class Orchestrator:
             for o in ctx.session.cells[cid].outputs
             if o.kind == "figure"
         ]
+        review = P.format_review_for_report(run.issues, run.findings)
         prompt = P.REPORT.format(
             question=run.question,
             findings=P.format_findings(run.findings.items),
             figures="\n".join(figures) or "（无）",
             draft=draft or "（无）",
+            review=review,
         )
         messages = [{"role": "system", "content": "你是严谨的数据分析报告撰写者。"}, {"role": "user", "content": prompt}]
         resp = await self._call(ctx, messages, phase="report")
         report = _strip_fence(resp.content)
-        allowed = [run.question, json.dumps(run.plan or {}, ensure_ascii=False)]
+        # Thresholds quoted from review issues ("少于 30 年") may appear in the limitations section.
+        allowed = [run.question, json.dumps(run.plan or {}, ensure_ascii=False), review]
         check = check_report(report, run.findings, extra_allowed=allowed)
         ctx.emit(T.CHECK, attempt=1, **check.to_dict())
 
@@ -345,7 +427,8 @@ class Orchestrator:
 
         run.report = report
         run.check = check.to_dict()
-        ctx.emit(T.REPORT, markdown=report, check=run.check, findings=[f.to_dict() for f in run.findings.items])
+        ctx.emit(T.REPORT, markdown=report, check=run.check, findings=[f.to_dict() for f in run.findings.items],
+                 issues=[i.to_dict() for i in run.issues])
 
     # ------------------------------------------------------------------ helpers
 

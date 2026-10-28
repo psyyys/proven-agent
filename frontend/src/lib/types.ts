@@ -89,6 +89,79 @@ export interface Finding {
   evidence_id: string;
   value: number | null;
   numbers: number[];
+  status?: "active" | "retracted";
+  replaced_by?: string | null;
+}
+
+export interface ReviewIssue {
+  finding_id: string;
+  severity: "error" | "warning";
+  message: string;
+  detail: string;
+  rule_id: string;
+  name: string;
+  basis: string;
+  source: "rule" | "llm";
+  suggestion: string;
+}
+
+export interface Rule {
+  id: string;
+  name: string;
+  type: "range" | "condition" | "consistency" | string;
+  severity: "error" | "warning";
+  applies_when: string[];
+  check: Record<string, unknown>;
+  message: string;
+  basis: string;
+  unless_mention: string[];
+  source: string;
+}
+
+export interface RuleSetInfo {
+  ok: boolean;
+  error?: string;
+  rules: Rule[];
+  review_points: string[];
+}
+
+export interface ReviewEvalSummary {
+  cases: number;
+  passed: number;
+  expected: number;
+  caught: number;
+  catch_rate_pct: number;
+  rule_caught: string;
+  llm_caught: string;
+  false_positive_cases: number;
+  false_positive_rate_pct: number;
+  clean_cases: number;
+  clean_flagged: number;
+  not_covered_by_rules: number;
+}
+
+export interface ReviewEvalListItem {
+  name: string;
+  pack: string;
+  mode: "rules" | "full";
+  model: string | null;
+  time: string;
+  summary: ReviewEvalSummary;
+}
+
+export interface ReviewEvalReport extends ReviewEvalListItem {
+  rules: number;
+  results: {
+    id: string;
+    claim: string;
+    expect: string[];
+    fired: string[];
+    missed: string[];
+    extra: string[];
+    passed: boolean;
+    note: string;
+    issues: ReviewIssue[];
+  }[];
 }
 
 export interface Hit {
@@ -131,6 +204,7 @@ export interface RuntimeSettings {
   embed_model: string | null;
   rerank_model: string | null;
   mode: "single" | "multi";
+  review: "off" | "rules" | "full";
   step_budget: number;
   max_steps: number;
   llm_temperature: number;
@@ -174,6 +248,7 @@ export interface EvalListItem {
   pack: string;
   model: string;
   mode: string;
+  review?: string;
   time: string;
   summary: EvalSummary;
 }

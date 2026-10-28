@@ -1,0 +1,38 @@
+# 商业 · 信息系统 领域规则（初稿，需要作者核实和补充）
+# 格式说明见 docs/domain-rules-template.md
+
+review_points:
+  - 收入口径（含税/不含税、是否扣除退款和折扣）要与语义层的指标定义一致
+  - 比较不同年份或月份时，检查数据是否覆盖完整期间（不完整的期间不能直接与完整期间比较）
+  - 客户、订单、商品之间的关联要防止一对多关联导致的重复计数
+  - 平均值容易被少数大客户拉高，必要时同时给出中位数
+
+rules:
+  - id: B001
+    name: 金额类指标不为负
+    type: range
+    severity: error
+    applies_when: [销售额, 营业额, 营收, 收入, 客单价, 订单金额, 消费金额, 成交额, GMV]
+    unless_mention: [退款, 冲销, 净额]
+    check: {min: 0, skip_percent: true}
+    message: 金额类指标出现负数，检查是否把差值或变化量当成了金额本身，或混入了退款记录
+    basis: 销售额、客单价等为非负量；变化量应写成"减少 X"或用百分比表示
+
+  - id: B002
+    name: 比率类指标在 0 到 100% 之间
+    type: range
+    severity: error
+    applies_when: [毛利率, 复购率, 流失率, 转化率, 留存率, 渗透率, 退货率, 活跃率]
+    check: {min: 0, max: 100, percent: true}
+    message: 比率应在 0–100% 之间，检查分子是否是分母的子集（如复购客户必须属于全部客户）
+    basis: 这些比率的分子都是分母的子集
+
+  - id: B101
+    name: 同比、环比要说明对比期
+    type: condition
+    severity: warning
+    applies_when: [同比, 环比, YoY, MoM]
+    check:
+      mention_any: [上年, 去年, 上一年, 上月, 上季度, 同期, 基期, "re:(?:19|20)\\d{2}", "re:[Qq][1-4]", "re:\\d{1,2}\\s*月"]
+    message: 同比、环比结论要写明当期和对比期（如"2025 年较 2024 年"），否则读者无法判断比较对象
+    basis: 同比、环比的定义依赖于明确的当期和基期

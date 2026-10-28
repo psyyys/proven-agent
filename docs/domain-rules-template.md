@@ -1,124 +1,127 @@
-# 领域规则模板（第 2 期审核员使用）
+# 领域规则编写指南（审核员第一层）
 
-> 这份文档由领域专家填写。规则写成 YAML，放在领域包目录下（如 `proven/packs/water/rules.yaml`）。
-> 下面的例子只是格式示范，**内容、阈值和依据请按你掌握的规范和经验修改**。
+> 规则写成 YAML，放在领域包目录下：`proven/packs/<领域>/rules.yaml`。`proven/packs/general/rules.yaml` 里的通用规则（统计表述、占比）对所有领域包生效。
+>
+> 水利和商业已有一版**初稿**（由 Claude 起草）。作者需要逐条核实：依据里标注"待核实"的，请对照规范原文确认条文号；阈值按自己掌握的规范和经验调整；不认同的规则直接删掉。
 
-## 规则的三种类型
+## 改完之后怎么检查
 
-| 类型 | 检查什么 | 怎么判断 |
+```powershell
+proven rules --pack water          # 检查格式，列出全部规则（格式错误会指出哪条规则的哪个字段）
+proven review-eval --pack water    # 跑陷阱测试：错的结论是否被拦下，对的结论是否被误拦
+```
+
+网页上的"审核规则"页面显示同样的内容，可以一键运行陷阱测试。
+
+## 一条规则长什么样
+
+```yaml
+rules:
+  - id: W001                      # 编号，在报告和日志里引用
+    name: 径流系数在 0 到 1 之间     # 一句话名称
+    type: range                   # range 取值范围 | condition 适用条件 | consistency 文字与数字一致（只用于分类显示）
+    severity: error               # error：退回分析员重做一次 | warning：写进报告的"假设与局限"
+    applies_when: [径流系数, runoff ratio]    # 触发词：结论里出现其中任何一个才检查（不区分大小写）
+    unless_mention: [融雪]          # 可选，豁免词：结论里写了这些词就不检查
+    check: {min: 0, max: 1}       # 怎么检查，见下一节
+    message: 径流系数超出 0–1，检查单位、时段和流域面积是否一致    # 不通过时告诉分析员的话
+    basis: 径流系数定义为同期径流深与降水量之比（GB/T 50095-2014）  # 依据：规范条文、教材、经验，面试时可以引用
+
+review_points:                    # 可选：交给模型审核员的检查要点（规则写不出来的方法问题）
+  - 单位换算：流量 cfs 与 m³/s、流量与径流深（需要流域面积）
+```
+
+## check 的四种写法
+
+### 1. 紧跟在触发词后的数值在范围内
+
+```yaml
+check: {min: 0, max: 1}
+```
+
+"径流系数为 1.32" → 取到 1.32 → 不通过。"径流系数分别为 0.31、0.42 和 1.35" → 逐个检查。
+
+程序会尽量避免取错数字。以下情况不检查：
+- 中间隔着另一个指标："径流系数与干旱指数的**相关系数**为 -0.75"
+- 中间有比较词："径流系数**大于** 1 的流域有 12 个"
+- 数字后面是计数单位："最高的 10 **个**流域"
+
+| 选项 | 含义 |
+|---|---|
+| `min` / `max` | 下限 / 上限 |
+| `percent: true` | 范围按百分数理解（0–100）；写成 0.42 的小数会换算成 42% |
+| `skip_percent: true` | 不检查百分数（如金额规则，"销售额下降 5.6%"里的 5.6% 是变化率，不是金额） |
+
+没有 `percent` 时，"径流系数为 45%"会换算成 0.45 再检查。
+
+### 2. 某个"事实"满足条件
+
+```yaml
+check: {fact: sample_size, min: 30, if_missing: warning}
+```
+
+内置的事实（程序认识这些写法）：
+
+| fact | 含义 | 能识别的写法（举例） |
 |---|---|---|
-| `range` 取值范围 | 某个量必须在合理范围内 | 结论里出现这个量时，数字必须落在范围内 |
-| `condition` 适用条件 | 某种方法只能在满足条件时使用 | 结论涉及这种方法时，检查条件是否满足 |
-| `consistency` 文字与数字一致 | 某些说法必须有相应的数字支撑 | 结论里出现关键词时，必须同时出现满足条件的数字 |
+| `p_value` | 显著性检验 p 值 | p=0.03、p < 0.05、p 值为 0.03、p-value: 0.03、pvalue=0.03 |
+| `correlation` | 相关系数 | r = -0.45、ρ=0.6、相关系数为 0.75 |
+| `sample_size` | 样本长度 | 样本 19 年、19 年资料、共 19 年、n=19、样本量为 19、2000–2018 年（算作 19 年） |
+| `return_period` | 重现期 | 100 年一遇、百年一遇、重现期 100 年、T=100、P=1%（算作 100 年） |
+| `cs_cv` | P-III 曲线的 Cs/Cv | Cs/Cv=2.98 |
 
-## 每条规则的字段
-
-```yaml
-- id: 规则编号，如 W001
-  name: 一句话名称
-  type: range | condition | consistency
-  severity: error | warning      # error 退回重做；warning 写进"假设与局限"
-  applies_when: 结论中出现哪些关键词时检查这条规则
-  check: 具体怎么判断（见下面例子）
-  message: 不通过时告诉分析员的话
-  basis: 依据（规范条文、教材、经验），面试时可以引用
-```
-
-## 水利示例（请修改和补充）
+也可以自定义，写出数值前面的标签：
 
 ```yaml
-rules:
-  # ---------- 取值范围 ----------
-  - id: W001
-    name: 径流系数在 0 到 1 之间
-    type: range
-    severity: error
-    applies_when: [径流系数, runoff ratio]
-    check: {min: 0, max: 1}
-    message: 径流系数超出 0–1，检查径流深与降水的单位和时段是否一致
-    basis: 径流系数定义为径流深与同期降水之比（待补充规范或教材出处）
-
-  - id: W002
-    name: 年降水量与当地气候常年值偏差
-    type: range
-    severity: warning
-    applies_when: [年降水, 年均降水, 年降雨]
-    check: {relative_to: climate_normal, max_deviation: 0.3}   # 与常年值偏差超过 30% 时提示
-    message: 年降水量与当地常年值偏差较大，请核对数据来源（站点实测 / 再分析 / 遥感）
-    basis: 待补充（如当地气象站多年平均值）
-
-  # ---------- 适用条件 ----------
-  - id: W101
-    name: 频率分析的样本长度
-    type: condition
-    severity: warning
-    applies_when: [重现期, 设计洪峰, 设计暴雨, 百年一遇, P-III]
-    check: {sample_size_min: 30}
-    message: 样本少于 30 年，设计值外推不确定性大，必须在结论中说明，不宜直接作为工程设计值
-    basis: 待补充（如 SL 44 关于资料系列长度的要求）
-
-  - id: W102
-    name: 外推倍数
-    type: condition
-    severity: error
-    applies_when: [重现期]
-    check: {max_return_period_over_sample: 5}   # 重现期超过样本年数 5 倍时不允许不加说明地给出
-    message: 重现期远超样本长度，请改为"仅供参考"并说明不确定性，或给出置信区间
-    basis: 待补充
-
-  - id: W103
-    name: 选样方式必须说明
-    type: condition
-    severity: warning
-    applies_when: [年最大, 年最大值序列]
-    check: {must_mention_any: [水文年, 日历年]}
-    message: 请说明年最大值按日历年还是水文年选样
-    basis: 待补充
-
-  # ---------- 文字与数字一致 ----------
-  - id: W201
-    name: "显著"需要显著性检验支撑
-    type: consistency
-    severity: error
-    applies_when: [显著上升, 显著下降, 显著增加, 显著减少, 显著趋势]
-    check: {requires: p_value, max: 0.05}
-    message: 写"显著"必须给出 p 值且 p < 0.05；不显著时请写"无显著趋势"
-    basis: 统计检验的常规约定
-
-  - id: W202
-    name: "预测"需要说明方法
-    type: consistency
-    severity: warning
-    applies_when: [预测, 预估]
-    check: {must_mention_any: [情景, 气候平均, 统计外推, 置信区间, 模型]}
-    message: 基于历史统计的结果应称为"统计情景"或"气候平均"，并说明不是确定性预报
-    basis: 待补充
+check: {fact: {labels: [干旱指数, aridity]}, min: 0}
 ```
 
-## 商业示例（可选）
+| 选项 | 含义 |
+|---|---|
+| `min` / `max` | 下限 / 上限。写成"p < 0.05"时按上限 0.05 理解 |
+| `abs_min` / `abs_max` | 绝对值的下限 / 上限（如"强相关"要求 \|r\| ≥ 0.7） |
+| `in` | 在哪里找：`claim`（结论）、`evidence`（证据代码和输出）、`run`（同一次分析的其他结论）。默认三处按顺序找，找到就停 |
+| `if_missing` | 找不到时怎么办：`pass`（默认，不管）、`warning`、`error` |
+
+找到多个值、只有部分不满足时，记为警告，并提示分析员在结论中写明对应的数值。
+
+### 3. 两个事实的比值
 
 ```yaml
-rules:
-  - id: B001
-    name: 占比之和
-    type: range
-    severity: error
-    applies_when: [占比, 份额, 比例]
-    check: {min: 0, max: 100}
-    message: 占比应在 0–100% 之间，检查分母是否正确
-
-  - id: B101
-    name: 同比需要两期数据
-    type: condition
-    severity: error
-    applies_when: [同比, YoY]
-    check: {must_mention_any: [上年, 去年, 同期]}
-    message: 同比结论需要说明对比的基期
+check: {ratio: {of: return_period, to: sample_size, max: 5}}
 ```
 
-## 填写建议
+"19 年资料推算 100 年一遇" → 100 / 19 = 5.3 倍 → 不通过。通常配合 `unless_mention: [不确定性, 置信区间, 仅供参考]`：说明了不确定性就放行。
 
-1. **先写 5–10 条你最有把握的规则**，不求多；每条都写清依据
-2. 优先写"模型最容易犯、但专业人员一眼就能看出"的错误
-3. 阈值不确定的，先设为 `warning`，跑几次看误报情况再调整
-4. 写完后，我们为每条规则构造 1–2 个"会触发"和"不会触发"的测试用例，确认规则本身是对的
+### 4. 必须提到某些说法
+
+```yaml
+check:
+  mention_any: [水文年, 日历年, water_year]
+  in: [claim, evidence, run]
+```
+
+只要提到其中一个就通过。`in` 默认只看结论；加上 `evidence` 后，代码里写了 `water_year_start_month=10` 也算说明过。
+
+以 `re:` 开头的是正则表达式，例如 `"re:(?:19|20)\\d{2}"` 表示"出现了年份"。触发词本身不算（"同比"里的"比"不会满足"对比"）。
+
+## 怎么写出好规则
+
+1. **先写模型最容易犯、但专业人员一眼就能看出的错误**：单位没换算导致径流系数大于 1、短序列外推百年一遇、把不显著写成显著
+2. **拿不准的先设为 `warning`**：跑几次真实分析，看误报多不多，再决定要不要升为 `error`
+3. **每条都写依据**：规范条文号、教材章节，或者"经验值"。这是面试时最能体现专业性的部分
+4. **每加一条规则，在 `evals/review_cases.yaml` 里加用例**：至少一条应该被拦的、一条看起来相似但不应该被拦的。误拦比漏拦更伤人：分析员会被无谓地退回重做
+5. **规则写不出来的，写进 `review_points`**：交给模型审核员判断
+
+## 陷阱测试用例的格式
+
+```yaml
+cases:
+  - id: w-c01
+    claim: 按 P-III 分布（适线法）计算，100 年一遇设计洪峰为 812 m³/s     # 待检查的结论
+    code: "fit = p3_fit(am.peak)\nprint(fit)"                          # 可选：证据代码
+    evidence: "P3Fit(n=19, mean=246.55, Cv=0.712, Cs=2.120, ...)"        # 可选：证据输出
+    context: 按水文年选取 2000–2018 年的年最大洪峰                         # 可选：同次分析的其他结论
+    expect: [W101, W102]       # 应该触发的规则；正确的结论写 []；只有模型审核能发现的写 [llm]
+    note: 19 年资料外推百年一遇，且没有说明不确定性
+```

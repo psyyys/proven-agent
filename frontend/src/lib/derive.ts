@@ -1,4 +1,4 @@
-import type { AgentEvent, Cell, Finding, Hit, Plan, ReportCheck } from "./types";
+import type { AgentEvent, Cell, Finding, Hit, Plan, ReportCheck, ReviewIssue } from "./types";
 
 export type TimelineItem =
   | { kind: "plan"; key: string; plan: Plan; awaiting: boolean; approved: boolean; edited: boolean }
@@ -31,6 +31,18 @@ export type TimelineItem =
       durationMs?: number;
     }
   | { kind: "ask"; key: string; question: string; options: string[] }
+  | {
+      kind: "review";
+      key: string;
+      round: number;
+      task: number | null;
+      findings: string[];
+      issues?: ReviewIssue[];
+      errors?: number;
+      warnings?: number;
+      model?: boolean;
+      action?: "redo" | "accept" | "final";
+    }
   | { kind: "check"; key: string; check: ReportCheck & { attempt: number } }
   | { kind: "finished"; key: string; status: string; error?: string };
 
@@ -44,6 +56,9 @@ export interface RunView {
   findings: Finding[];
   report: string;
   check: ReportCheck | null;
+  /** Open review issues: the latest review of each step (or of the whole run in single mode). */
+  issues: ReviewIssue[];
+  reviewMode: string;
   usage: { input_tokens: number; output_tokens: number; llm_calls: number };
   phase: string;
   error?: string;
@@ -65,6 +80,8 @@ export function deriveRun(events: AgentEvent[]): RunView {
     findings: [],
     report: "",
     check: null,
+    issues: [],
+    reviewMode: "off",
     usage: { input_tokens: 0, output_tokens: 0, llm_calls: 0 },
     phase: "思考中",
     mode: "single",
@@ -74,6 +91,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
     toolStats: {},
   };
   const tools = new Map<string, Extract<TimelineItem, { kind: "tool" }>>();
+  const latestReview = new Map<number, ReviewIssue[]>(); // task (0 = single mode) -> issues
   let openTool: Extract<TimelineItem, { kind: "tool" }> | null = null;
 
   for (const e of events) {
@@ -82,6 +100,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
       case "run.started":
         view.question = d.question;
         view.mode = d.mode ?? "single";
+        view.reviewMode = d.review ?? "off";
         view.startedAt = e.ts;
         view.phase = "制定计划";
         break;
@@ -94,6 +113,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
         if (d.phase === "execute") view.phase = "分析中";
         if (d.phase === "analyst" && !view.phase.startsWith("第")) view.phase = "分析中";
         if (d.phase === "report" || d.phase === "report_fix") view.phase = "核查报告";
+        if (d.phase === "redo") view.phase = "按审核意见修正";
         break;
       case "plan.proposed":
         view.plan = d.plan;
@@ -157,6 +177,28 @@ export function deriveRun(events: AgentEvent[]): RunView {
         openTool = null;
         break;
       }
+      case "review.started":
+        view.phase = d.round > 1 ? "复审中" : "审核中";
+        view.items.push({ kind: "review", key: e.id, round: d.round, task: d.task ?? null, findings: d.findings ?? [] });
+        break;
+      case "review.result": {
+        const open = [...view.items]
+          .reverse()
+          .find((i) => i.kind === "review" && i.round === d.round && i.task === (d.task ?? null) && !i.action) as
+          | Extract<TimelineItem, { kind: "review" }>
+          | undefined;
+        const data = { issues: d.issues, errors: d.errors, warnings: d.warnings, model: d.model, action: d.action };
+        if (open) Object.assign(open, data);
+        else view.items.push({ kind: "review", key: e.id, round: d.round, task: d.task ?? null, findings: d.findings ?? [], ...data });
+        latestReview.set(d.task ?? 0, d.issues ?? []);
+        view.issues = [...latestReview.values()].flat();
+        break;
+      }
+      case "finding.retracted": {
+        const f = view.findings.find((x) => x.id === d.id);
+        if (f) Object.assign(f, { status: "retracted", replaced_by: d.replaced_by });
+        break;
+      }
       case "agent.ask_user":
         view.items.push({ kind: "ask", key: e.id, question: d.question, options: d.options ?? [] });
         break;
@@ -166,6 +208,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
       case "report.final":
         view.report = d.markdown;
         view.check = d.check;
+        if (d.issues) view.issues = d.issues;
         break;
       case "run.finished":
         view.finishedAt = e.ts;

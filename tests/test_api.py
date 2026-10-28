@@ -150,3 +150,22 @@ def test_ui_support_endpoints(settings):
         assert client.get("/api/evals/nope").status_code == 404
         leak = client.get("/api/evals/..%2F..%2Fpyproject")  # never reaches a file outside evals/
         assert "[project]" not in leak.text and "results" not in leak.text
+
+
+def test_review_endpoints(settings):
+    app = create_app(make_service(settings, ScriptedChat([])))
+    with TestClient(app) as client:
+        rules = client.get("/api/packs/water/rules").json()
+        assert rules["ok"] and {"G002", "W001", "W102"} <= {r["id"] for r in rules["rules"]} and rules["review_points"]
+        assert client.get("/api/packs/nope/rules").status_code == 404
+
+        assert client.get("/api/review-evals").json() == []
+        done = client.post("/api/packs/water/review-eval").json()
+        assert done["summary"]["catch_rate_pct"] == 100.0
+        listed = client.get("/api/review-evals").json()
+        assert [x["name"] for x in listed] == [done["name"]] and listed[0]["mode"] == "rules"
+        report = client.get(f"/api/review-evals/{done['name']}").json()
+        assert any(r["expect"] == ["llm"] for r in report["results"])
+
+        assert client.patch("/api/settings", json={"review": "full"}).json()["review"] == "full"
+        assert client.patch("/api/settings", json={"review": "maybe"}).status_code == 400

@@ -1,0 +1,88 @@
+# 水利 · 水资源与水文 领域规则（初稿）
+#
+# 这份清单由 Claude 起草，作者需要逐条核实：标注"待核实"的依据请对照规范原文确认条文号，
+# 阈值按自己掌握的规范和经验调整。格式说明见 docs/domain-rules-template.md
+#
+# 主要参考：
+#   SL 44-2006《水利水电工程设计洪水计算规范》
+#   GB/T 50095-2014《水文基本术语和符号标准》
+#   詹道江、徐向阳、陈元芳《工程水文学》（第 4 版）
+
+review_points:
+  - 单位换算：流量 cfs 与 m³/s（1 cfs ≈ 0.0283 m³/s）、流量与径流深（需要流域面积）、mm/d 与 mm/年
+  - 径流系数、径流深等指标的分子和分母必须是同一时段、同一流域
+  - 频率分析的样本应满足独立、同分布；年最大值序列不能混入同一年的多个洪峰
+  - 设计值外推越远不确定性越大，结论中应说明样本长度和外推程度
+  - 降水、蒸发等气象数据要说明来源（站点实测、再分析、遥感），再分析数据与站点实测可能有系统偏差
+  - 逐日数据计算年值时要检查缺测，缺测较多的年份应剔除或说明
+
+rules:
+  # ---------- 取值范围 ----------
+  - id: W001
+    name: 径流系数在 0 到 1 之间
+    type: range
+    severity: error
+    applies_when: [径流系数, runoff ratio, runoff_ratio]
+    check: {min: 0, max: 1}
+    message: 径流系数超出 0–1，检查径流深与降水的单位、时段和流域面积是否一致（如 cfs 是否换算成了 mm）
+    basis: 径流系数为同一时段内径流深与降水量之比（GB/T 50095-2014 术语定义；《工程水文学》第 2 章）。流域有大量外来水或融雪时可能接近或略超 1，需单独说明
+
+  - id: W002
+    name: 基流指数在 0 到 1 之间
+    type: range
+    severity: error
+    applies_when: [基流指数, baseflow index, baseflow_index, BFI]
+    check: {min: 0, max: 1}
+    message: 基流指数是基流量占总径流量的比例，只能在 0–1 之间，检查基流分割的结果
+    basis: 基流指数定义（基流量 / 总径流量）；CAMELS 数据集中 baseflow_index 即按此定义
+
+  - id: W003
+    name: P-III 曲线的 Cs/Cv 在常用范围内
+    type: range
+    severity: warning
+    applies_when: [P-III, P3, 皮尔逊Ⅲ, 皮尔逊III, 皮尔逊 III, 频率曲线, 设计洪峰, 设计值, 适线]
+    check: {fact: cs_cv, min: 2, max: 4, in: [claim, evidence], if_missing: pass}
+    message: Cs/Cv 超出常用的 2–4 范围。矩法估计的 Cs 在短序列中偏差很大，建议用适线法或参考地区经验值确定 Cs/Cv，并在结论中说明
+    basis: 我国洪水频率分析中 Cs/Cv 一般取 2–4，暴雨洪水地区多取 2.5–3.5（各地水文手册经验值，待核实具体出处）
+
+  # ---------- 适用条件 ----------
+  - id: W101
+    name: 频率分析的样本长度
+    type: condition
+    severity: warning
+    applies_when: [重现期, 年一遇, 设计洪峰, 设计暴雨, 设计洪水, 设计值, P-III, 皮尔逊Ⅲ, 频率分析]
+    check: {fact: sample_size, min: 30, if_missing: warning}
+    message: 频率分析的样本少于 30 年（或没有写明样本长度）。设计值外推不确定性大，必须在结论中说明样本长度，并考虑插补延长或加入历史洪水
+    basis: SL 44-2006 对实测洪水系列长度的要求：一般不宜少于 30 年，不足时应插补延长或加入历史洪水和调查洪水（条文号待核实）
+
+  - id: W102
+    name: 重现期不宜远超样本长度
+    type: condition
+    severity: error
+    applies_when: [重现期, 年一遇, 设计洪峰, 设计值]
+    unless_mention: [不确定性, 置信区间, 仅供参考, 外推, 误差较大, 抽样误差, 历史洪水]
+    check: {ratio: {of: return_period, to: sample_size, max: 5}, if_missing: pass}
+    message: 重现期远超样本长度，属于远距离外推。请在结论中说明不确定性（如"外推较远，仅供参考"或给出置信区间），不能直接作为确定的设计值
+    basis: 频率曲线外延的抽样误差随重现期增大而迅速增大；工程实践中通常要求用历史洪水、地区综合等方法约束外延（《工程水文学》频率分析章节；倍数阈值 5 为经验值，待核实）
+
+  - id: W103
+    name: 年最大值的选样方式要说明
+    type: condition
+    severity: warning
+    applies_when: [年最大值, 年最大洪峰序列, 年最大流量序列, 年最大洪峰均值, 年最大洪峰平均, annual maximum]
+    check:
+      mention_any: [水文年, 日历年, 自然年, water year, water_year, hydrologic year, calendar year, 水文年度]
+      in: [claim, evidence, run]   # 同一次分析中任何一条结论说明过即可
+    message: 请说明年最大值按日历年还是水文年选样；跨年的汛期（如美国 10 月起算的水文年）用日历年选样可能把同一场洪水算两次或漏掉
+    basis: 年最大值法要求每年选一个最大值且样本相互独立；水文年的起止应避开汛期（SL 44-2006 关于选样的规定，待核实）
+
+  - id: W104
+    name: 频率曲线要说明参数估计方法
+    type: condition
+    severity: warning
+    applies_when: [P-III, P3, 皮尔逊Ⅲ, 皮尔逊III, 频率曲线, 设计洪峰, 设计值]
+    check:
+      mention_any: [矩法, 适线, 目估适线, 优化适线, L-矩, L矩, 线性矩, 权函数, 极大似然, 最大似然, moments, MLE, L-moments, curve fitting]
+      in: [claim, evidence]
+    message: 请说明 P-III 参数（均值、Cv、Cs）用什么方法估计。我国规范推荐适线法，矩法只能作为初值
+    basis: SL 44-2006 规定频率曲线参数采用适线法确定，矩法等估计值作为初值（条文号待核实）

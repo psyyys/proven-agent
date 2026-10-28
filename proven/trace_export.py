@@ -58,7 +58,7 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
         raise KeyError(f"没有找到运行记录 {run_id}")
     lines: list[str] = []
     t0 = events[0].ts
-    stats = {"tool_calls": 0, "tool_errors": 0, "cell_errors": 0, "rejected_findings": 0}
+    stats = {"tool_calls": 0, "tool_errors": 0, "cell_errors": 0, "rejected_findings": 0, "review_errors": 0, "redo": 0}
     errors: list[str] = []
     steps: list[tuple] = []
 
@@ -69,7 +69,7 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
         d = e.data
         if e.type == T.RUN_STARTED:
             lines += [f"# 运行日志 {run_id}", "", f"- 问题：{d.get('question')}",
-                      f"- 领域包：{d.get('pack')}　模型：{d.get('model')}　模式：{d.get('mode', 'single')}",
+                      f"- 领域包：{d.get('pack')}　模型：{d.get('model')}　模式：{d.get('mode', 'single')}　审核：{d.get('review', 'off')}",
                       f"- 开始时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(e.ts))}", ""]
         elif e.type == T.LLM_CALL:
             u = d.get("usage") or {}
@@ -123,6 +123,21 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
             lines += [f"{'✅' if ok else '❌'} 结果（{d.get('duration_ms', 0)} ms）：", _fence(_cut(d.get("text", ""))), ""]
         elif e.type == T.ASK_USER:
             lines += [f"❓ 向用户提问：{d['question']}", ""]
+        elif e.type == T.REVIEW:
+            action = {"redo": "退回重做", "accept": "通过", "final": "复审完成"}.get(d.get("action"), d.get("action"))
+            if d.get("round") == 1:
+                stats["review_errors"] += d.get("errors", 0)
+                stats["redo"] += d.get("action") == "redo"
+            lines.append(f"### {at(e)} 🧐 审核第 {d.get('round')} 轮（{'规则 + 模型' if d.get('model') else '规则'}）："
+                         f"错误 {d.get('errors', 0)}，警告 {d.get('warnings', 0)} → {action}")
+            for i in d.get("issues") or []:
+                who = i.get("rule_id") or "审核员"
+                text = "；".join(x for x in (i.get("detail"), i.get("message")) if x)
+                lines.append(f"- [{who} · {'错误' if i.get('severity') == 'error' else '警告'}] {i.get('finding_id')}：{text}"
+                             + (f" 建议：{i['suggestion']}" if i.get("suggestion") else ""))
+            lines.append("")
+        elif e.type == T.FINDING_RETRACTED:
+            lines += [f"↺ {d['id']} 已被 {d['replaced_by']} 替换", ""]
         elif e.type == T.CHECK:
             if d.get("ok"):
                 lines += [f"🔎 报告核查第 {d['attempt']} 次：通过（{d['checked']} 个数字）", ""]
@@ -132,7 +147,13 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
         elif e.type == T.REPORT:
             lines += ["## 最终报告", "", d.get("markdown", ""), ""]
             if d.get("findings"):
-                lines += ["## 已登记结论", ""] + [f"- **{f['id']}** {f['claim']}（证据 {f['evidence_id']}）" for f in d["findings"]] + [""]
+                lines += ["## 已登记结论", ""] + [
+                    f"- **{f['id']}** {'~~' + f['claim'] + '~~（已被 ' + str(f.get('replaced_by')) + ' 替换）' if f.get('status') == 'retracted' else f['claim']}"
+                    f"（证据 {f['evidence_id']}）" for f in d["findings"]] + [""]
+            if d.get("issues"):
+                lines += ["## 未解决的审核意见", ""] + [
+                    f"- [{i.get('rule_id') or '审核员'} · {'错误' if i.get('severity') == 'error' else '警告'}] {i.get('finding_id')}："
+                    f"{i.get('detail') or i.get('message')}" for i in d["issues"]] + [""]
         elif e.type == T.RUN_FINISHED:
             u = d.get("usage") or {}
             summary = [
@@ -142,6 +163,8 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
                 f"- 耗时：{e.ts - t0:.0f} 秒；模型调用 {u.get('llm_calls', 0)} 次；Token 输入 {u.get('input_tokens', 0)} / 输出 {u.get('output_tokens', 0)}",
                 f"- 工具调用 {stats['tool_calls']} 次，失败 {stats['tool_errors']} 次（其中代码报错 {stats['cell_errors']} 次，结论登记被拒 {stats['rejected_findings']} 次）",
             ]
+            if stats["review_errors"] or stats["redo"]:
+                summary.append(f"- 审核发现错误 {stats['review_errors']} 个，退回重做 {stats['redo']} 次")
             if steps:
                 summary += ["", "### 各步骤用量", "", "| 步骤 | 状态 | 模型调用 | Token |", "|---|---|---|---|"]
                 summary += [f"| {i}. {t} | {st} | {c} | {tok} |" for i, t, st, tok, c in steps]

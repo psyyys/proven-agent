@@ -48,6 +48,9 @@ REPORT = "report.final"
 STEP_STARTED = "step.started"  # multi mode: an analyst starts one plan step
 STEP_FINISHED = "step.finished"
 CHECK = "report.check"
+FINDING_RETRACTED = "finding.retracted"  # replaced by a corrected finding after review
+REVIEW_STARTED = "review.started"
+REVIEW = "review.result"  # rule check + model review of a step's findings
 
 
 class TraceStore:

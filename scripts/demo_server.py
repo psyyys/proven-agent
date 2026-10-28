@@ -67,7 +67,8 @@ def script() -> list:
             "巴西（190.1 美元，8.16%）、德国（156.48 美元，6.72%）[F2]\n"
             "- 共有 24 个国家产生过销售，收入高度集中在前 5 名 [F3]\n\n[C2]\n\n"
             "## 方法与口径\n收入按语义层定义的发票口径计算（SUM(Invoice.Total)），国家取客户主数据 Customer.Country。\n\n"
-            "## 假设与局限\n- 国家按客户注册地址统计，与账单国家（BillingCountry）可能存在差异\n- 数据期间为 2021-2025 年全部发票，未区分年度变化"
+            "## 假设与局限\n- 国家按客户注册地址统计，与账单国家（BillingCountry）可能存在差异\n- 数据期间为 2021-2025 年全部发票，未区分年度变化\n"
+            "- 审核员提示：前 5 名合计占比只能粗略反映集中度，严格判断需要补充赫芬达尔指数等集中度指标"
         ),
     ]
 
@@ -94,15 +95,27 @@ def multi_script() -> list:
         say(
             "## 结论\n美国是收入最高的市场，贡献 523.06 美元，占总收入的 22.46% [F1]。前 5 名国家合计贡献 58.77% 的收入 [F3]。\n\n"
             "## 主要发现\n- 前 5 名依次为美国、加拿大、法国、巴西、德国 [F2]\n\n[C2]\n\n"
-            "## 方法与口径\n收入按语义层定义的发票口径计算。"
+            "## 方法与口径\n收入按语义层定义的发票口径计算。\n\n"
+            "## 假设与局限\n- 审核员提示：前 5 名合计占比只能粗略反映集中度，严格判断需要补充赫芬达尔指数等集中度指标"
         ),
     ]
+
+
+REVIEW_NOTE = (
+    '{"issues": [{"finding": "F3", "severity": "warning", '
+    '"problem": "前 5 名合计占比只能粗略反映集中度，「收入高度集中」的说法缺少参照", '
+    '"suggestion": "补充赫芬达尔指数（HHI），或与 24 个国家平均分布的情形对比"}]}'
+)
 
 
 class DemoChat(ScriptedChat):
     model = "演示模式（预设脚本）"
 
     async def chat(self, messages, tools=None, json_mode=False):
+        if json_mode and "你是审核员" in messages[-1]["content"]:
+            # Reviewer calls are answered here so they do not consume the analysis script.
+            self.calls.append({"messages": [dict(m) for m in messages], "tools": False, "json_mode": True})
+            return say(REVIEW_NOTE if "[F3]" in messages[-1]["content"] else '{"issues": []}')
         if not self.script:  # replay the same scripted analysis for every new question
             self.script = multi_script() if MULTI else script()
         return await super().chat(messages, tools, json_mode)

@@ -133,6 +133,12 @@ async def record_finding(ctx, args) -> ToolResult:
             data={"rejected": True, "missing": missing},
         )
 
+    replaces = [x for x in re.split(r"[\s,，、;；]+", (args.get("replaces") or "").strip().upper()) if x]
+    for fid in replaces:
+        old = ctx.run.findings.get(fid)
+        if old is None or old.status != "active":
+            return ToolResult(f"replaces 中的 {fid} 不存在或已被替换。可替换的结论：{', '.join(x.id for x in ctx.run.findings.active()) or '无'}", ok=False)
+
     value = args.get("value")
     try:
         value = float(value) if value is not None else None
@@ -141,8 +147,12 @@ async def record_finding(ctx, args) -> ToolResult:
     f = ctx.run.findings.add(claim, etype, evidence, value)
     if ctx.step_findings is not None:
         ctx.step_findings.append(f.id)
-    ctx.emit(T.FINDING, **f.to_dict())
-    return ToolResult(f"已登记 {f.id}：{claim}（证据 {evidence}）", data={"finding_id": f.id})
+    ctx.emit(T.FINDING, **f.to_dict(), replaces=replaces)
+    for fid in replaces:
+        ctx.run.findings.retract(fid, by=f.id)
+        ctx.emit(T.FINDING_RETRACTED, id=fid, replaced_by=f.id)
+    note = f"，替换了 {', '.join(replaces)}" if replaces else ""
+    return ToolResult(f"已登记 {f.id}：{claim}（证据 {evidence}{note}）", data={"finding_id": f.id})
 
 
 def _where_else(ctx, missing: list[str], exclude: set[str]) -> str:
@@ -280,6 +290,7 @@ def builtin_tools() -> ToolRegistry:
                         "claim": {"type": "string", "description": "结论陈述，包含具体数字，如：2013 年总销售额为 2,328.60 美元"},
                         "evidence": {"type": "string", "description": "证据编号：代码单元（如 C3）或文档片段（如 D12）；多个用逗号分隔，如 C6,C8"},
                         "value": {"type": "number", "description": "该结论的核心数值（可选）"},
+                        "replaces": {"type": "string", "description": "按审核意见更正时，填写被替换的旧结论编号，如 F3（可选）"},
                     },
                     ["claim", "evidence"],
                 ),

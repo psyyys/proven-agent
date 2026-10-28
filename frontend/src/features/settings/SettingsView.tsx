@@ -5,9 +5,9 @@ import type { RuntimeSettings } from "../../lib/types";
 import { useStore } from "../../app/store";
 import { Badge, Button, Card, Field, Input, Kbd, Segmented, Spinner, Switch } from "../../ui/kit";
 
-type Editable = Pick<RuntimeSettings, "mode" | "step_budget" | "max_steps" | "llm_temperature" | "tool_output_chars" | "cell_timeout">;
+type Editable = Pick<RuntimeSettings, "mode" | "review" | "step_budget" | "max_steps" | "llm_temperature" | "tool_output_chars" | "cell_timeout">;
 
-const NUMERIC: { key: keyof Omit<Editable, "mode">; label: string; hint: string; step: number }[] = [
+const NUMERIC: { key: keyof Omit<Editable, "mode" | "review">; label: string; hint: string; step: number }[] = [
   { key: "step_budget", label: "每个分析员的轮数上限", hint: "多 Agent 模式下，每个计划步骤最多调用工具的轮数", step: 1 },
   { key: "max_steps", label: "单 Agent 最大步数", hint: "单 Agent 模式下整个分析最多调用工具的轮数", step: 1 },
   { key: "llm_temperature", label: "模型温度", hint: "越低越稳定，数据分析建议 0–0.3", step: 0.05 },
@@ -24,6 +24,7 @@ export function SettingsView() {
     if (settings)
       setDraft({
         mode: settings.mode,
+        review: settings.review,
         step_budget: settings.step_budget,
         max_steps: settings.max_steps,
         llm_temperature: settings.llm_temperature,
@@ -147,6 +148,17 @@ export function SettingsView() {
                   options={[
                     { value: "single", label: "单 Agent" },
                     { value: "multi", label: "多 Agent" },
+                  ]}
+                />
+              </Field>
+              <Field label="审核员" hint="规则检查由程序执行，不消耗 Token；模型审核每次多一次模型调用（多 Agent 模式下每步一次）。有错误级问题时退回重做一次">
+                <Segmented
+                  value={draft.review}
+                  onChange={(v) => setDraft({ ...draft, review: v })}
+                  options={[
+                    { value: "off", label: "关闭" },
+                    { value: "rules", label: "只用领域规则" },
+                    { value: "full", label: "规则 + 模型审核" },
                   ]}
                 />
               </Field>

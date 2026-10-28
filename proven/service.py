@@ -58,12 +58,15 @@ class Service:
         self.sessions[session.id] = session
         return session
 
-    def start_run(self, session: Session, question: str, auto_approve: bool = True, mode: str | None = None) -> Run:
+    def start_run(self, session: Session, question: str, auto_approve: bool = True, mode: str | None = None,
+                  review: str | None = None) -> Run:
         if any(r.status in ("planning", "awaiting_approval", "running", "reporting") for r in session.runs.values()):
             raise RuntimeError("该会话中有分析正在进行，请等待完成或取消后再提问")
         if mode not in (None, "single", "multi"):
             raise ValueError(f"未知的执行模式：{mode}（可选 single / multi）")
-        run = Run(question=question, auto_approve=auto_approve, mode=mode)
+        if review not in (None, "off", "rules", "full"):
+            raise ValueError(f"未知的审核模式：{review}（可选 off / rules / full）")
+        run = Run(question=question, auto_approve=auto_approve, mode=mode, review_mode=review)
         session.runs[run.id] = run
         self.runs[run.id] = (session, run)
         self._tasks[run.id] = asyncio.create_task(self.orchestrator.run(session, run))

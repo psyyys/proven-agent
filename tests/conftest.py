@@ -10,7 +10,8 @@ DATA = Path(__file__).resolve().parents[1] / "data"
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(llm_api_key="test", workspace=tmp_path / "ws", data_dir=DATA, cell_timeout=30)
+    # Rules-only review by default: scripted models in older tests do not script reviewer replies.
+    return Settings(llm_api_key="test", workspace=tmp_path / "ws", data_dir=DATA, cell_timeout=30, review="rules")
 
 
 def make_service(settings: Settings, model) -> Service:

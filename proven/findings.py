@@ -51,6 +51,8 @@ class Finding:
     evidence_id: str  # cell id (C3) or chunk id (D12)
     value: float | None = None
     numbers: list[float] = field(default_factory=list)
+    status: str = "active"  # "active" | "retracted" (replaced after review)
+    replaced_by: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -170,9 +172,17 @@ class FindingRegistry:
     def get(self, fid: str) -> Finding | None:
         return next((f for f in self.items if f.id == fid), None)
 
+    def active(self) -> list[Finding]:
+        return [f for f in self.items if f.status == "active"]
+
+    def retract(self, fid: str, by: str) -> None:
+        f = self.get(fid)
+        if f is not None:
+            f.status, f.replaced_by = "retracted", by
+
     def supported_values(self) -> list[float]:
         vals: list[float] = []
-        for f in self.items:
+        for f in self.active():
             vals.extend(f.numbers)
             if f.value is not None:
                 vals.append(f.value)
@@ -209,7 +219,7 @@ def check_report(report: str, registry: FindingRegistry, extra_allowed: Iterable
             ctx = report[max(0, n.start - 20) : n.end + 10].replace("\n", " ")
             bad.append({"number": n.raw, "context": ctx, "start": n.start, "end": n.end})
 
-    known = {f.id for f in registry.items}
+    known = {f.id for f in registry.active()}
     cited = set(re.findall(r"F\d+", " ".join(_CITATION.findall(report))))
-    unknown = sorted(c for c in cited if c not in known)
+    unknown = sorted(c for c in cited if c not in known)  # retracted findings count as unknown
     return ReportCheck(checked=len(nums), unsupported=bad, unknown_citations=unknown)

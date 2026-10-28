@@ -47,6 +47,10 @@ class Pack:
         return self.dir / "knowledge"
 
     @property
+    def rules_file(self) -> Path:
+        return self.dir / "rules.yaml"
+
+    @property
     def evals_file(self) -> Path:
         return self.dir / "evals" / "questions.yaml"
 
@@ -54,6 +58,12 @@ class Pack:
         if not self.knowledge_dir.exists():
             return []
         return sorted(p for p in self.knowledge_dir.rglob("*") if p.is_file() and not p.name.startswith("."))
+
+    def rules(self):
+        """Review rules: the general pack's rules plus this pack's own (see proven/rules.py)."""
+        from ..rules import load_rules
+
+        return load_rules(self.dir, PACKS_DIR / "general")
 
     def dataset(self, dataset_id: str) -> DemoDataset | None:
         return next((d for d in self.datasets if d.id == dataset_id), None)

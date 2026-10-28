@@ -16,17 +16,20 @@ import {
   Loader2,
   Pencil,
   Plus,
+  ScanSearch,
   ShieldCheck,
   ShieldAlert,
   Stamp,
   Terminal,
   Trash2,
+  Undo2,
   X,
 } from "lucide-react";
 import type { RunView, TimelineItem } from "../../lib/derive";
 import type { Plan } from "../../lib/types";
 import { cx, Segmented } from "../../ui/kit";
 import { CellView } from "./CellView";
+import { IssueRow } from "./IssueRow";
 
 const TOOL_LABEL: Record<string, { label: string; icon: any }> = {
   run_python: { label: "运行代码", icon: Terminal },
@@ -127,17 +130,30 @@ function ToolCard({ item, codeSignal }: { item: Extract<TimelineItem, { kind: "t
 
   if (item.name === "record_finding") {
     const rejected = item.ok === false;
+    const retracted = item.finding?.status === "retracted";
+    const replaces = String(item.args.replaces ?? "").toUpperCase().trim();
     return (
-      <div id={item.finding ? `finding-${item.finding.id}` : undefined} className={`rounded-lg border px-3 py-2 text-sm ${rejected ? "border-bad/30 bg-bad-soft" : "border-ok/30 bg-ok-soft"}`}>
+      <div
+        id={item.finding ? `finding-${item.finding.id}` : undefined}
+        className={cx("rounded-lg border px-3 py-2 text-sm", rejected ? "border-bad/30 bg-bad-soft" : retracted ? "border-line bg-sunken" : "border-ok/30 bg-ok-soft")}
+      >
         <div className="flex items-start gap-2">
-          {rejected ? <ShieldAlert size={16} className="mt-0.5 shrink-0 text-bad" /> : <ShieldCheck size={16} className="mt-0.5 shrink-0 text-ok" />}
+          {rejected ? (
+            <ShieldAlert size={16} className="mt-0.5 shrink-0 text-bad" />
+          ) : retracted ? (
+            <Undo2 size={16} className="mt-0.5 shrink-0 text-faint" />
+          ) : (
+            <ShieldCheck size={16} className="mt-0.5 shrink-0 text-ok" />
+          )}
           <div className="min-w-0">
             <div>
-              {item.finding && <span className="mr-1.5 font-mono text-xs font-semibold text-ok">{item.finding.id}</span>}
-              <span className={rejected ? "text-muted line-through" : ""}>{item.args.claim}</span>
+              {item.finding && <span className={cx("mr-1.5 font-mono text-xs font-semibold", retracted ? "text-faint" : "text-ok")}>{item.finding.id}</span>}
+              <span className={rejected || retracted ? "text-muted line-through" : ""}>{item.args.claim}</span>
               <span className="ml-1.5 font-mono text-xs text-faint">← {String(item.args.evidence ?? "").toUpperCase()}</span>
             </div>
             {rejected && <div className="mt-1 text-xs text-bad">{item.text}</div>}
+            {retracted && <div className="mt-0.5 text-xs text-faint">审核后已被 {item.finding?.replaced_by} 替换</div>}
+            {replaces && !rejected && <div className="mt-0.5 text-xs text-ok">按审核意见更正，替换 {replaces}</div>}
           </div>
         </div>
       </div>
@@ -181,6 +197,44 @@ function ToolCard({ item, codeSignal }: { item: Extract<TimelineItem, { kind: "t
           <pre className={`max-h-48 overflow-auto whitespace-pre-wrap rounded-md px-3 py-2 font-mono text-xs leading-relaxed scroll-thin ${item.ok === false ? "bg-bad-soft text-bad" : "bg-sunken text-muted"}`}>{item.text}</pre>
         )}
       </div>
+    </div>
+  );
+}
+
+const REVIEW_ACTION: Record<string, { label: string; cls: string }> = {
+  redo: { label: "退回重做", cls: "bg-bad-soft text-bad" },
+  accept: { label: "通过", cls: "bg-ok-soft text-ok" },
+  final: { label: "复审完成", cls: "bg-accent-soft text-accent" },
+};
+
+function ReviewCard({ item }: { item: Extract<TimelineItem, { kind: "review" }> }) {
+  const act = item.action ? REVIEW_ACTION[item.action] : null;
+  const issues = item.issues ?? [];
+  return (
+    <div className={cx("rounded-xl border px-4 py-3", item.action === "redo" ? "border-bad/30" : "border-line", "bg-panel")}>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
+          <ScanSearch size={14} />
+        </span>
+        <span className="font-semibold">审核员 · 第 {item.round} 轮</span>
+        <span className="text-xs text-faint">
+          {item.action ? (item.model ? "领域规则 + 模型审核" : "领域规则") : `检查 ${item.findings.join("、")}`}
+        </span>
+        {act ? <span className={`ml-auto rounded-full px-2 py-0.5 text-xs ${act.cls}`}>{act.label}</span> : <Loader2 size={14} className="ml-auto animate-spin text-accent" />}
+      </div>
+      {item.action && (
+        <div className="ml-8 mt-2 space-y-1.5">
+          {issues.length === 0 ? (
+            <p className="text-xs text-ok">{item.findings.join("、")} 未发现问题</p>
+          ) : (
+            issues.map((i, k) => <IssueRow key={k} issue={i} />)
+          )}
+          {item.action === "redo" && <p className="pt-0.5 text-xs text-muted">有错误级问题，已带着审核意见退回{item.task ? "本步分析员" : "分析"}重做一次。</p>}
+          {item.action === "final" && issues.some((i) => i.severity === "error") && (
+            <p className="pt-0.5 text-xs text-bad">重做后仍有未解决的错误，报告中会注明，相关结论不作为确定结论。</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -238,11 +292,16 @@ function visible(item: TimelineItem, filter: TimelineFilter, showReasoning: bool
     case "code":
       return item.kind === "tool" && !!item.cell;
     case "findings":
-      return (item.kind === "tool" && item.name === "record_finding") || item.kind === "check";
+      return (item.kind === "tool" && item.name === "record_finding") || item.kind === "check" || item.kind === "review";
     case "retrieval":
       return item.kind === "tool" && RETRIEVAL_TOOLS.has(item.name);
     case "errors":
-      return (item.kind === "tool" && item.ok === false) || (item.kind === "finished" && item.status === "error") || (item.kind === "check" && !item.check.ok);
+      return (
+        (item.kind === "tool" && item.ok === false) ||
+        (item.kind === "finished" && item.status === "error") ||
+        (item.kind === "check" && !item.check.ok) ||
+        (item.kind === "review" && (item.issues?.length ?? 0) > 0)
+      );
   }
 }
 
@@ -345,7 +404,8 @@ export function Timeline({
           {codeSignal.open ? "收起全部代码" : "展开全部代码"}
         </button>
         <span className="ml-auto text-xs text-faint">
-          {view.mode === "multi" ? "多 Agent" : "单 Agent"} · {view.usage.llm_calls} 次调用
+          {view.mode === "multi" ? "多 Agent" : "单 Agent"}
+          {view.reviewMode !== "off" ? ` · 审核${view.reviewMode === "full" ? "（规则 + 模型）" : "（规则）"}` : ""} · {view.usage.llm_calls} 次调用
         </span>
         {steps.length > 0 && (
           <div className="w-full">
@@ -368,6 +428,8 @@ export function Timeline({
                 return <PlanCard key={item.key} item={item} onApprove={onApprove} onCancel={onCancel} />;
               case "step":
                 return <StepHeader key={item.key} item={item} />;
+              case "review":
+                return <ReviewCard key={item.key} item={item} />;
               case "reasoning":
                 return <Reasoning key={item.key} text={item.text} phase={item.phase} />;
               case "thought":
