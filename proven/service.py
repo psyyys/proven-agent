@@ -8,6 +8,7 @@ from typing import Callable
 from .agent import Orchestrator, Run, Session
 from .config import Settings
 from .experience import ExperienceStore
+from .lessons import LessonStore
 from .llm import ChatModel, build_chat_model, build_embedder
 from .packs import Pack, discover_packs
 from .rag import KnowledgeBase, Reranker
@@ -28,6 +29,7 @@ class Service:
         settings.workspace.mkdir(parents=True, exist_ok=True)
         self.trace = TraceStore(settings.workspace / "trace.db")
         self.experience = ExperienceStore(settings.workspace / "experience.db")
+        self.lessons = LessonStore(settings.workspace / "lessons.db")
         self.packs: dict[str, Pack] = discover_packs()
         self._model_factory = model_factory or (lambda: build_chat_model(settings))
         self._model: ChatModel | None = None
@@ -53,20 +55,23 @@ class Service:
         if pack is None:
             raise KeyError(f"unknown pack: {pack_id}")
         kb = KnowledgeBase(self.settings.workspace / "embed_cache", self.embedder, self.reranker)
-        session = Session(pack, self.settings, self.trace, self.experience, kb, executor=executor)
+        session = Session(pack, self.settings, self.trace, self.experience, kb, executor=executor, lessons=self.lessons)
         await session.start()
         self.sessions[session.id] = session
         return session
 
     def start_run(self, session: Session, question: str, auto_approve: bool = True, mode: str | None = None,
-                  review: str | None = None) -> Run:
-        if any(r.status in ("planning", "awaiting_approval", "running", "reporting") for r in session.runs.values()):
-            raise RuntimeError("该会话中有分析正在进行，请等待完成或取消后再提问")
+                  review: str | None = None, lessons: str | None = None, defer_reflection: bool = False) -> Run:
         if mode not in (None, "single", "multi"):
             raise ValueError(f"未知的执行模式：{mode}（可选 single / multi）")
         if review not in (None, "off", "rules", "full"):
             raise ValueError(f"未知的审核模式：{review}（可选 off / rules / full）")
-        run = Run(question=question, auto_approve=auto_approve, mode=mode, review_mode=review)
+        if lessons not in (None, "off", "use", "learn"):
+            raise ValueError(f"未知的经验模式：{lessons}（可选 off / use / learn）")
+        if any(r.status in ("planning", "awaiting_approval", "running", "reporting") for r in session.runs.values()):
+            raise RuntimeError("该会话中有分析正在进行，请等待完成或取消后再提问")
+        run = Run(question=question, auto_approve=auto_approve, mode=mode, review_mode=review, lessons_mode=lessons,
+                  defer_reflection=defer_reflection)
         session.runs[run.id] = run
         self.runs[run.id] = (session, run)
         self._tasks[run.id] = asyncio.create_task(self.orchestrator.run(session, run))
@@ -75,6 +80,11 @@ class Service:
     async def wait(self, run_id: str) -> Run:
         await self._tasks[run_id]
         return self.runs[run_id][1]
+
+    async def reflect(self, run_id: str, extra=(), forbidden=()) -> dict:
+        """Reflect on a finished run whose reflection was deferred (see Run.defer_reflection)."""
+        session, run = self.runs[run_id]
+        return await self.orchestrator.reflect(session, run, extra=list(extra), forbidden=list(forbidden))
 
     def approve(self, run_id: str, plan: dict | None = None) -> None:
         _, run = self.runs[run_id]

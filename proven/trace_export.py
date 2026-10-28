@@ -69,7 +69,8 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
         d = e.data
         if e.type == T.RUN_STARTED:
             lines += [f"# 运行日志 {run_id}", "", f"- 问题：{d.get('question')}",
-                      f"- 领域包：{d.get('pack')}　模型：{d.get('model')}　模式：{d.get('mode', 'single')}　审核：{d.get('review', 'off')}",
+                      f"- 领域包：{d.get('pack')}　模型：{d.get('model')}　模式：{d.get('mode', 'single')}　审核：{d.get('review', 'off')}"
+                      f"　经验：{d.get('lessons', 'off')}",
                       f"- 开始时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(e.ts))}", ""]
         elif e.type == T.LLM_CALL:
             u = d.get("usage") or {}
@@ -136,6 +137,19 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
                 lines.append(f"- [{who} · {'错误' if i.get('severity') == 'error' else '警告'}] {i.get('finding_id')}：{text}"
                              + (f" 建议：{i['suggestion']}" if i.get("suggestion") else ""))
             lines.append("")
+        elif e.type == T.LESSONS_INJECTED:
+            lines += ["**参考的以往教训**（放进了提示词）：", ""] + [f"- [{x['label']}] {x['when'] + '：' if x.get('when') else ''}{x['text']}"
+                                                         for x in d.get("lessons") or []] + [""]
+        elif e.type == T.REFLECTION:
+            fails = d.get("failures") or []
+            lines += ["## 反思", "", f"失败 {len(fails)} 类：" + "、".join(f"{f['kind']}（{f['signature'][:50]}）" for f in fails)
+                      if fails else "本次没有失败"]
+            if d.get("credited"):
+                label = {"helped": "未再出现对应失败", "failed": "对应失败再次出现", "retired": "多次无效，已停用"}
+                lines += ["", "本次参考的教训：" + "；".join(f"L{k} {label.get(v, v)}" for k, v in d["credited"].items())]
+            lines += [""] + [f"- 新教训 [{x['label']}] {x['text']}" for x in d.get("added") or []]
+            lines += [f"- 强化已有教训 L{i}" for i in d.get("reinforced") or []]
+            lines += [f"- 已丢弃（包含本次结果数字）：{t}" for t in d.get("skipped") or []] + [""]
         elif e.type == T.FINDING_RETRACTED:
             lines += [f"↺ {d['id']} 已被 {d['replaced_by']} 替换", ""]
         elif e.type == T.CHECK:

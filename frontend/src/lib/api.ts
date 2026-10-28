@@ -2,7 +2,10 @@ import type {
   AgentEvent,
   EvalListItem,
   EvalReport,
+  EvolveListItem,
+  EvolveReport,
   Experience,
+  Lesson,
   Health,
   HistoryRun,
   Hit,
@@ -78,6 +81,13 @@ export const api = {
   rules: (pack: string) => request<RuleSetInfo>("GET", `/api/packs/${encodeURIComponent(pack)}/rules`),
   reviewEvals: () => request<ReviewEvalListItem[]>("GET", "/api/review-evals"),
   reviewEval: (name: string) => request<ReviewEvalReport>("GET", `/api/review-evals/${encodeURIComponent(name)}`),
+  lessons: (pack: string) => request<Lesson[]>("GET", `/api/lessons?pack=${encodeURIComponent(pack)}`),
+  addLesson: (pack: string, text: string, when: string, scope: "pack" | "all") => request<Lesson>("POST", "/api/lessons", { pack, text, when, scope }),
+  patchLesson: (id: number, patch: Partial<Pick<Lesson, "text" | "when" | "scope" | "pinned" | "status">>) =>
+    request<Lesson>("PATCH", `/api/lessons/${id}`, patch),
+  deleteLesson: (id: number) => request("DELETE", `/api/lessons/${id}`),
+  evolveReports: () => request<EvolveListItem[]>("GET", "/api/evolve"),
+  evolveReport: (name: string) => request<EvolveReport>("GET", `/api/evolve/${encodeURIComponent(name)}`),
   runRulesEval: (pack: string) => request<{ name: string; summary: ReviewEvalSummary }>("POST", `/api/packs/${encodeURIComponent(pack)}/review-eval`),
 };
 

@@ -18,6 +18,7 @@ const PHASE_LABEL: Record<string, string> = {
   report_fix: "报告修订",
   review: "审核员",
   redo: "按审核意见修正",
+  reflect: "反思员",
 };
 
 const kfmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n));

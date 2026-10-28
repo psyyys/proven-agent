@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Bot,
+  Library,
   Brain,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -19,6 +20,7 @@ import {
   ScanSearch,
   ShieldCheck,
   ShieldAlert,
+  Sparkle,
   Stamp,
   Terminal,
   Trash2,
@@ -239,6 +241,102 @@ function ReviewCard({ item }: { item: Extract<TimelineItem, { kind: "review" }> 
   );
 }
 
+export const FAILURE_LABEL: Record<string, string> = {
+  code: "代码报错",
+  evidence: "登记被拒",
+  report: "报告核查不通过",
+  review: "审核问题",
+  budget: "轮数用完",
+  tool: "工具出错",
+  eval: "评测答错",
+};
+
+function LessonsCard({ item }: { item: Extract<TimelineItem, { kind: "lessons" }> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-dashed border-accent/40 bg-accent-soft/40 px-3 py-2 text-sm">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 text-left">
+        <Library size={15} className="shrink-0 text-accent" />
+        <span>参考了 {item.lessons.length} 条以往总结的教训</span>
+        <span className="truncate text-xs text-faint">{!open && item.lessons.map((x) => x.label).join("、")}</span>
+        <span className="ml-auto shrink-0 text-xs text-accent">{open ? "收起" : "展开"}</span>
+      </button>
+      {open && (
+        <ul className="mt-2 space-y-1 pl-6 text-xs text-muted">
+          {item.lessons.map((x) => (
+            <li key={x.id}>
+              <span className="mr-1.5 font-mono font-semibold text-accent">{x.label}</span>
+              {x.when && <span className="text-faint">{x.when}：</span>}
+              {x.text}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+const CREDIT_LABEL: Record<string, { label: string; cls: string }> = {
+  helped: { label: "对应的失败没有再出现", cls: "text-ok" },
+  failed: { label: "对应的失败又出现了", cls: "text-warn" },
+  retired: { label: "多次无效，已停用", cls: "text-bad" },
+};
+
+function ReflectionCard({ item }: { item: Extract<TimelineItem, { kind: "reflection" }> }) {
+  const credited = Object.entries(item.credited);
+  return (
+    <div className="rounded-xl border border-line bg-panel px-4 py-3">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
+          <Sparkle size={14} />
+        </span>
+        <span className="font-semibold">反思员</span>
+        <span className="text-xs text-faint">从这次的失败中总结教训，供以后的运行参考</span>
+        {!item.done && <Loader2 size={14} className="ml-auto animate-spin text-accent" />}
+      </div>
+      {item.done && (
+        <div className="ml-8 mt-2 space-y-2 text-xs">
+          {item.failures.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {item.failures.map((f) => (
+                <span key={f.signature} title={f.text} className="rounded bg-sunken px-1.5 py-0.5 text-muted">
+                  {FAILURE_LABEL[f.kind] ?? f.kind}
+                  {f.count > 1 ? ` ×${f.count}` : ""}
+                  {f.fix ? " · 已修正" : ""}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-ok">这次运行没有失败。</p>
+          )}
+          {item.added.map((x) => (
+            <div key={x.id} className="rounded-md border-l-2 border-accent py-0.5 pl-2.5">
+              <span className="mr-1.5 font-mono font-semibold text-accent">新 {x.label}</span>
+              {x.when && <span className="text-faint">{x.when}：</span>}
+              <span className="text-ink">{x.text}</span>
+            </div>
+          ))}
+          {item.reinforced.length > 0 && <p className="text-muted">再次印证已有教训：{item.reinforced.map((i) => `L${i}`).join("、")}</p>}
+          {item.skipped.length > 0 && <p className="text-faint">丢弃 {item.skipped.length} 条：包含本次的结果数字，不是通用做法</p>}
+          {credited.length > 0 && (
+            <p className="text-muted">
+              参考过的教训：
+              {credited.map(([id, v], k) => (
+                <span key={id} className={CREDIT_LABEL[v]?.cls}>
+                  {k > 0 ? "；" : ""}L{id} {CREDIT_LABEL[v]?.label ?? v}
+                </span>
+              ))}
+            </p>
+          )}
+          {item.failures.length > 0 && item.added.length === 0 && item.reinforced.length === 0 && (
+            <p className="text-faint">没有值得总结的通用教训。</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const STEP_STATUS: Record<string, { label: string; cls: string }> = {
   done: { label: "完成", cls: "bg-ok-soft text-ok" },
   partial: { label: "部分完成", cls: "bg-warn-soft text-warn" },
@@ -285,7 +383,7 @@ const RETRIEVAL_TOOLS = new Set(["search_knowledge", "lookup_semantic", "recall_
 
 function visible(item: TimelineItem, filter: TimelineFilter, showReasoning: boolean): boolean {
   if (item.kind === "reasoning") return showReasoning && filter === "all";
-  if (["plan", "step", "ask"].includes(item.kind)) return true;
+  if (["plan", "step", "ask", "lessons", "reflection"].includes(item.kind)) return true;
   switch (filter) {
     case "all":
       return true;
@@ -405,7 +503,8 @@ export function Timeline({
         </button>
         <span className="ml-auto text-xs text-faint">
           {view.mode === "multi" ? "多 Agent" : "单 Agent"}
-          {view.reviewMode !== "off" ? ` · 审核${view.reviewMode === "full" ? "（规则 + 模型）" : "（规则）"}` : ""} · {view.usage.llm_calls} 次调用
+          {view.reviewMode !== "off" ? ` · 审核${view.reviewMode === "full" ? "（规则 + 模型）" : "（规则）"}` : ""}
+          {view.lessonsMode === "learn" ? " · 经验学习" : view.lessonsMode === "use" ? " · 经验只读" : ""} · {view.usage.llm_calls} 次调用
         </span>
         {steps.length > 0 && (
           <div className="w-full">
@@ -430,6 +529,10 @@ export function Timeline({
                 return <StepHeader key={item.key} item={item} />;
               case "review":
                 return <ReviewCard key={item.key} item={item} />;
+              case "lessons":
+                return <LessonsCard key={item.key} item={item} />;
+              case "reflection":
+                return <ReflectionCard key={item.key} item={item} />;
               case "reasoning":
                 return <Reasoning key={item.key} text={item.text} phase={item.phase} />;
               case "thought":

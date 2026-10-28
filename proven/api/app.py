@@ -30,6 +30,22 @@ class NewRun(BaseModel):
     auto_approve: bool = False
     mode: str | None = None  # "single" | "multi"; defaults to PROVEN_MODE
     review: str | None = None  # "off" | "rules" | "full"; defaults to PROVEN_REVIEW
+    lessons: str | None = None  # "off" | "use" | "learn"; defaults to PROVEN_LESSONS
+
+
+class NewLesson(BaseModel):
+    pack: str
+    text: str
+    when: str = ""
+    scope: str = "pack"
+
+
+class LessonPatch(BaseModel):
+    text: str | None = None
+    when: str | None = None
+    scope: str | None = None
+    pinned: bool | None = None
+    status: str | None = None
 
 
 class Approval(BaseModel):
@@ -39,6 +55,7 @@ class Approval(BaseModel):
 class SettingsPatch(BaseModel):
     mode: str | None = None
     review: str | None = None
+    lessons: str | None = None
     step_budget: int | None = None
     max_steps: int | None = None
     llm_temperature: float | None = None
@@ -112,6 +129,7 @@ def create_app(service: Service | None = None) -> FastAPI:
             "rerank_model": st.rerank_model if s.reranker else None,
             "mode": st.mode,
             "review": st.review,
+            "lessons": st.lessons,
             "step_budget": st.step_budget,
             "max_steps": st.max_steps,
             "llm_temperature": st.llm_temperature,
@@ -132,6 +150,8 @@ def create_app(service: Service | None = None) -> FastAPI:
             raise HTTPException(400, "mode 只能是 single 或 multi")
         if "review" in changes and changes["review"] not in ("off", "rules", "full"):
             raise HTTPException(400, "review 只能是 off、rules 或 full")
+        if "lessons" in changes and changes["lessons"] not in ("off", "use", "learn"):
+            raise HTTPException(400, "lessons 只能是 off、use 或 learn")
         for key, value in changes.items():
             if key in SETTING_LIMITS:
                 lo, hi = SETTING_LIMITS[key]
@@ -152,6 +172,53 @@ def create_app(service: Service | None = None) -> FastAPI:
     @app.get("/api/experiences")
     async def experiences(request: Request, pack: str):
         return [e.to_dict() for e in svc(request).experience.all(pack)]
+
+    @app.get("/api/lessons")
+    async def lessons(request: Request, pack: str, status: str | None = None):
+        return [x.to_dict() for x in svc(request).lessons.all(pack, status=status)]
+
+    @app.post("/api/lessons")
+    async def add_lesson(request: Request, body: NewLesson):
+        text = body.text.strip()
+        if not text:
+            raise HTTPException(400, "教训内容不能为空")
+        if body.scope not in ("pack", "all"):
+            raise HTTPException(400, "scope 只能是 pack 或 all")
+        return svc(request).lessons.add(body.pack, text, body.when.strip(), body.scope, origin="manual").to_dict()
+
+    @app.patch("/api/lessons/{lesson_id}")
+    async def patch_lesson(request: Request, lesson_id: int, body: LessonPatch):
+        if body.status not in (None, "active", "retired") or body.scope not in (None, "pack", "all"):
+            raise HTTPException(400, "status 只能是 active / retired，scope 只能是 pack / all")
+        x = svc(request).lessons.update(lesson_id, **body.model_dump(exclude_none=True))
+        if x is None:
+            raise HTTPException(404, "教训不存在")
+        return x.to_dict()
+
+    @app.delete("/api/lessons/{lesson_id}")
+    async def delete_lesson(request: Request, lesson_id: int):
+        if not svc(request).lessons.delete(lesson_id):
+            raise HTTPException(404, "教训不存在")
+        return {"ok": True}
+
+    @app.get("/api/evolve")
+    async def evolve_reports(request: Request):
+        out_dir = svc(request).settings.workspace / "evals" / "evolve"
+        items = []
+        for f in sorted(out_dir.glob("*.json"), reverse=True) if out_dir.exists() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            items.append({k: data.get(k) for k in ("pack", "model", "mode", "review", "time", "rounds")} | {"name": f.stem})
+        return items
+
+    @app.get("/api/evolve/{name}")
+    async def evolve_report(request: Request, name: str):
+        f = svc(request).settings.workspace / "evals" / "evolve" / f"{Path(name).name}.json"
+        if not f.exists():
+            raise HTTPException(404, "经验进化报告不存在")
+        return json.loads(f.read_text(encoding="utf-8"))
 
     @app.delete("/api/experiences/{exp_id}")
     async def delete_experience(request: Request, exp_id: int):
@@ -314,7 +381,7 @@ def create_app(service: Service | None = None) -> FastAPI:
         except RuntimeError as e:
             raise HTTPException(400, str(e)) from e
         try:
-            run = svc(request).start_run(session, body.question.strip(), body.auto_approve, body.mode, body.review)
+            run = svc(request).start_run(session, body.question.strip(), body.auto_approve, body.mode, body.review, body.lessons)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         except RuntimeError as e:

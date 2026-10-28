@@ -103,7 +103,8 @@ def format_profiles(profiles: dict[str, dict[str, Any]], max_cols: int = 40) -> 
     return "\n".join(blocks)
 
 
-def system_prompt(pack_prompt: str, semantic_summary: str, profiles_text: str, documents: list[str], experience_count: int) -> str:
+def system_prompt(pack_prompt: str, semantic_summary: str, profiles_text: str, documents: list[str], experience_count: int,
+                  lessons_text: str = "") -> str:
     parts = [SYSTEM]
     if pack_prompt.strip():
         parts.append("## 领域指引\n" + pack_prompt.strip())
@@ -114,6 +115,8 @@ def system_prompt(pack_prompt: str, semantic_summary: str, profiles_text: str, d
         parts.append("## 知识库文档（用 search_knowledge 检索）\n" + "、".join(documents))
     if experience_count:
         parts.append(f"## 经验库\n有 {experience_count} 条已验证的分析经验，遇到常见问题可先用 recall_experience 查看写法。")
+    if lessons_text:
+        parts.append(lessons_text)
     return "\n\n".join(parts)
 
 
@@ -267,3 +270,39 @@ def format_review_for_report(issues, findings) -> str:
             line = line.replace("· 错误]", "· 未解决的错误]", 1)
         lines.append(line)
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------- reflector (phase 3)
+
+REFLECTOR_SYSTEM = "你是反思员，负责从数据分析运行的失败中总结可以照做的经验。只输出 JSON。"
+
+REFLECT = """下面是一次数据分析运行中出现的失败，以及（如果有的话）后来成功的做法。请总结出以后的运行可以直接照做的教训。
+
+## 用户问题
+{question}
+
+## 失败记录
+{failures}
+
+## 已有的教训（不要重复；如果这次的失败说明某条已有教训仍然重要，在 reinforces 中填它的编号）
+{existing}
+
+## 要求
+- 每条教训一句话，写成"做什么 / 不要做什么"，不超过 60 字。例如："plotly 设置标题和坐标轴用 fig.update_layout()，Figure 没有 add_layout 方法"
+- 必须是以后其他问题也用得上的通用做法；不要写这次数据的具体结论和数值
+- when 写适用场景，如"用 plotly 画图时""登记百分比结论时"
+- scope：和这个领域的分析方法有关写 "pack"；和运行环境、Python 库、工具用法有关写 "all"
+- from 填这条教训来自哪几条失败记录的编号
+- 偶然的笔误、一次就自己改好且不太会再犯的小问题，不要总结
+- 没有值得总结的就返回空列表；最多 {max_lessons} 条
+
+只输出 JSON：
+{{"lessons": [{{"text": "...", "when": "...", "scope": "all", "from": [1], "reinforces": null}}]}}"""
+
+
+def format_lessons(lessons) -> str:
+    """The prompt section with lessons from earlier runs."""
+    if not lessons:
+        return ""
+    lines = [f"- [{x.label}] {x.when + '：' if x.when else ''}{x.text}" for x in lessons]
+    return "## 以往运行总结的教训\n反思员从以前运行的失败中总结的经验，遇到相应场景时照做：\n" + "\n".join(lines)

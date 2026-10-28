@@ -10,6 +10,9 @@ Both modes use the same ReAct loop, tools and checks.
 
 After execution (single) or after each step (multi), the reviewer checks the new findings: domain
 rules by code, then optionally a model in a reviewer role. An error sends the work back once.
+
+Lessons distilled from earlier runs' failures are added to the prompt; after the run, the reflector
+turns this run's failures into new lessons and credits the lessons it used.
 """
 
 from __future__ import annotations
@@ -25,11 +28,13 @@ from typing import Any
 from .. import trace as T
 from ..config import Settings
 from ..findings import check_report
+from ..lessons import Lesson
 from ..llm import ChatModel, LLMResponse
 from ..rules import RuleError, RuleSet
 from ..tools import SUBMIT_STEP, ToolRegistry, builtin_tools
 from . import prompts as P
 from . import review as R
+from .reflector import Failure, collect_failures, format_failures, leaks_result, parse_lessons
 from .review import ReviewResult
 from .run import Run, RunContext
 from .session import Session
@@ -59,11 +64,12 @@ class Orchestrator:
         session.runs[run.id] = run
         run.mode = run.mode or self.settings.mode
         run.review_mode = run.review_mode or self.settings.review
+        run.lessons_mode = run.lessons_mode or self.settings.lessons
         ctx.emit(T.RUN_STARTED, question=run.question, auto_approve=run.auto_approve, model=self.model.model,
-                 pack=session.pack.id, mode=run.mode, review=run.review_mode)
+                 pack=session.pack.id, mode=run.mode, review=run.review_mode, lessons=run.lessons_mode)
         try:
             ctx.rules = self._load_rules(ctx)
-            system = self._system_prompt(session)
+            system = self._system_prompt(session, self._pick_lessons(ctx))
             plan = await self._plan(ctx, system)
             if run.cancelled:
                 return self._finish(ctx, "cancelled")
@@ -88,6 +94,8 @@ class Orchestrator:
                 {"role": "user", "content": run.question},
                 {"role": "assistant", "content": run.report},
             ]
+            if run.lessons_mode == "learn" and not run.defer_reflection:
+                await self.reflect(session, run, ctx=ctx)
             return self._finish(ctx, "done")
         except asyncio.CancelledError:
             self._finish(ctx, "cancelled")
@@ -110,14 +118,83 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ phases
 
-    def _system_prompt(self, session: Session) -> str:
+    def _system_prompt(self, session: Session, lessons: list[Lesson] | None = None) -> str:
         return P.system_prompt(
             session.pack.prompt,
             session.semantic.summary(session.semantic_datasets),
             P.format_profiles(session.profiles),
             [d["name"] for d in session.documents],
             len(session.experience.all(session.pack.id)),
+            P.format_lessons(lessons or []),
         )
+
+    def _pick_lessons(self, ctx: RunContext) -> list[Lesson]:
+        run, store = ctx.run, ctx.session.lessons
+        if run.lessons_mode == "off" or store is None:
+            return []
+        lessons = store.select(ctx.session.pack.id, run.question)
+        run.lesson_ids = [x.id for x in lessons]
+        if lessons:
+            ctx.emit(T.LESSONS_INJECTED, lessons=[x.to_dict() for x in lessons])
+        return lessons
+
+    async def reflect(self, session: Session, run: Run, extra: list[Failure] = (), forbidden: list[float] = (),
+                      ctx: RunContext | None = None) -> dict[str, Any]:
+        """Learn from a finished run: credit the lessons it used, then turn its failures into lessons.
+
+        extra: failures found outside the trace (a wrong eval answer). forbidden: numbers a lesson must
+        not contain (the run's results, an eval's reference answer), so lessons stay about method."""
+        ctx = ctx or RunContext(session, run, self.settings)
+        store = session.lessons
+        if store is None:
+            return {}
+        failures = collect_failures(session.trace.events(run.id)) + list(extra)
+        credited = store.credit(run.lesson_ids, [f.signature for f in failures]) if run.lesson_ids else {}
+        if not failures and not credited:
+            return {}
+        ctx.emit(T.REFLECTION_STARTED, failures=len(failures))
+        added: list[dict[str, Any]] = []
+        reinforced: list[int] = []
+        skipped: list[str] = []
+        if failures:
+            pack = session.pack.id
+            retired = [x for x in store.all(pack, status="retired")][-5:]
+            existing = store.select(pack, run.question, k=15) + retired
+            prompt = P.REFLECT.format(
+                question=run.question,
+                failures=format_failures(failures),
+                existing="\n".join(
+                    f"- [{x.label}] {x.when + '：' if x.when else ''}{x.text}"
+                    + (f"（已停用：用过 {x.uses} 次，同样的失败仍然出现；不要重复它，换一种更具体的做法）" if x.status == "retired" else "")
+                    for x in existing
+                ) or "（无）",
+                max_lessons=3,
+            )
+            messages = [{"role": "system", "content": P.REFLECTOR_SYSTEM}, {"role": "user", "content": prompt}]
+            try:
+                resp = await self._call(ctx, messages, phase="reflect", json_mode=True)
+                items = parse_lessons(_parse_json(resp.content), len(failures), {x.id for x in existing})
+            except Exception as e:  # noqa: BLE001 - learning is optional, the run itself is done
+                ctx.emit(T.THOUGHT, text=f"反思员调用失败，本次不总结教训：{describe_error(e)}")
+                items = []
+            results = [v for f in run.findings.active() for v in [*f.numbers, *([f.value] if f.value is not None else [])]]
+            for it in items:
+                if leaks_result(it["text"], [*results, *forbidden]):
+                    skipped.append(it["text"])
+                    continue
+                sources = [failures[i - 1] for i in it["from"]]
+                sigs = [f.signature for f in sources]
+                target = store.get(it["reinforces"]) if it["reinforces"] else store.similar(pack, it["text"])
+                if target is not None:
+                    store.reinforce(target.id, run.id, sigs)
+                    reinforced.append(target.id)
+                else:
+                    category = sources[0].kind if sources else "other"
+                    added.append(store.add(pack, it["text"], it["when"], it["scope"], category, sigs, run.id).to_dict())
+        summary = {"failures": [f.to_dict() for f in failures], "credited": {str(k): v for k, v in credited.items()},
+                   "added": added, "reinforced": reinforced, "skipped": skipped}
+        ctx.emit(T.REFLECTION, **summary)
+        return summary
 
     async def _plan(self, ctx: RunContext, system: str) -> dict[str, Any]:
         run = ctx.run

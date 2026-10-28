@@ -41,6 +41,14 @@ def _print_event(e: T.Event) -> None:
             print(f"   [{who} · {'错误' if i['severity'] == 'error' else '警告'}] {i['finding_id']}：{i['detail'] or i['message']}")
     elif e.type == T.FINDING_RETRACTED:
         print(f"   ↺ {d['id']} 已被 {d['replaced_by']} 替换")
+    elif e.type == T.LESSONS_INJECTED:
+        print("\n📚 参考以往教训：")
+        for x in d["lessons"]:
+            print(f"   [{x['label']}] {x['text']}")
+    elif e.type == T.REFLECTION:
+        print(f"\n🪞 反思：失败 {len(d['failures'])} 类，新教训 {len(d['added'])} 条，强化 {len(d['reinforced'])} 条")
+        for x in d["added"]:
+            print(f"   + [{x['label']}] {x['text']}")
     elif e.type == T.CHECK:
         print(f"\n🔎 数字核查（第 {d['attempt']} 次）：{'通过' if d['ok'] else '未通过'}，检查 {d['checked']} 个数字")
     elif e.type == T.REPORT:
@@ -62,7 +70,7 @@ async def _ask(args) -> None:
         for f in args.file or []:
             p = Path(f)
             print(await session.add_upload(p.name, p.read_bytes()))
-        run = svc.start_run(session, args.question, mode=args.mode, review=args.review)
+        run = svc.start_run(session, args.question, mode=args.mode, review=args.review, lessons=args.lessons)
         q = svc.trace.subscribe(run.id)
         task = svc._tasks[run.id]
         while not (task.done() and q.empty()):
@@ -88,7 +96,8 @@ async def _eval(args) -> None:
         return
     svc = Service(settings)
     try:
-        report = await run_eval(svc, args.pack, only=args.only, out_dir=settings.workspace / "evals", mode=args.mode, review=args.review)
+        report = await run_eval(svc, args.pack, only=args.only, out_dir=settings.workspace / "evals", mode=args.mode, review=args.review,
+                                lessons=args.lessons)
         print(json.dumps(report["summary"], ensure_ascii=False, indent=1))
         for f in report.get("files", []):
             print("→", f)
@@ -136,6 +145,34 @@ async def _review_eval(args) -> None:
         print("→", f)
 
 
+def _lessons(args) -> None:
+    from .lessons import LessonStore
+
+    settings = Settings.from_env()
+    store = LessonStore(settings.workspace / "lessons.db")
+    items = store.all(args.pack, status=None if args.all else "active")
+    if not items:
+        print("还没有教训。分析中出现失败后，反思员会自动总结（PROVEN_LESSONS=learn）。")
+        return
+    for x in items:
+        flag = "📌" if x.pinned else ("停用" if x.status == "retired" else "")
+        print(f"[{x.label}] {flag} {x.when + '：' if x.when else ''}{x.text}")
+        print(f"       范围 {'通用' if x.scope == 'all' else x.pack} · 来源 {x.category} · 总结 {x.hits} 次 · 使用 {x.uses} 次"
+              f"（有效 {x.helped} / 无效 {x.failed_after}，得分 {x.score:.2f}）")
+
+
+async def _evolve(args) -> None:
+    from .evolve import run_evolution
+
+    settings = Settings.from_env()
+    report = await run_evolution(settings, args.pack, rounds=args.rounds, mode=args.mode, review=args.review, only=args.only)
+    print()
+    for r in report["rounds"]:
+        print(f"{r['label']:<16} 正确率 {r['accuracy_pct']:>5}%  失败 {r['failures_total']:>3}  Token {r['tokens']:>8}  教训 {r['lessons_active']}")
+    for f in report.get("files", []):
+        print("→", f)
+
+
 def _logs(args) -> None:
     from .trace import TraceStore
     from .trace_export import list_runs, run_to_markdown
@@ -176,6 +213,7 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--file", action="append", help="上传本地文件（可重复）")
     a.add_argument("--mode", choices=["single", "multi"], help="执行模式，默认取 PROVEN_MODE")
     a.add_argument("--review", choices=["off", "rules", "full"], help="审核模式，默认取 PROVEN_REVIEW")
+    a.add_argument("--lessons", choices=["off", "use", "learn"], help="经验模式，默认取 PROVEN_LESSONS")
 
     e = sub.add_parser("eval", help="运行评测")
     e.add_argument("--pack", required=True)
@@ -183,9 +221,22 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("--references-only", action="store_true", help="只计算标准答案（不调用模型）")
     e.add_argument("--mode", choices=["single", "multi"], help="执行模式，默认取 PROVEN_MODE；用于对比两种模式")
     e.add_argument("--review", choices=["off", "rules", "full"], help="审核模式，默认取 PROVEN_REVIEW；用于对比有无审核员")
+    e.add_argument("--lessons", choices=["off", "use", "learn"], default="off",
+                   help="经验模式，默认 off（不受以前运行的影响）；经验的效果用 proven evolve 测")
 
     r = sub.add_parser("rules", help="列出并检查领域包的审核规则")
     r.add_argument("--pack", required=True)
+
+    ls = sub.add_parser("lessons", help="查看反思员总结的教训")
+    ls.add_argument("--pack", required=True)
+    ls.add_argument("--all", action="store_true", help="包括已停用的教训")
+
+    ev = sub.add_parser("evolve", help="经验进化实验：训练题上总结教训，测试题上比较前后效果（会多次调用模型）")
+    ev.add_argument("--pack", required=True)
+    ev.add_argument("--rounds", type=int, default=2, help="训练轮数，默认 2")
+    ev.add_argument("--mode", choices=["single", "multi"], help="执行模式，默认取 PROVEN_MODE")
+    ev.add_argument("--review", choices=["off", "rules", "full"], help="审核模式，默认取 PROVEN_REVIEW")
+    ev.add_argument("--only", nargs="*", help="只用指定编号的题目")
 
     re_ = sub.add_parser("review-eval", help="审核员陷阱测试：统计拦截率和误拦率")
     re_.add_argument("--pack", required=True)
@@ -207,6 +258,10 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_ask(args))
     elif args.cmd == "eval":
         asyncio.run(_eval(args))
+    elif args.cmd == "lessons":
+        _lessons(args)
+    elif args.cmd == "evolve":
+        asyncio.run(_evolve(args))
     elif args.cmd == "rules":
         _rules(args)
     elif args.cmd == "review-eval":

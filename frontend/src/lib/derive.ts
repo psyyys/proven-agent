@@ -1,4 +1,4 @@
-import type { AgentEvent, Cell, Finding, Hit, Plan, ReportCheck, ReviewIssue } from "./types";
+import type { AgentEvent, Cell, Failure, Finding, Hit, Lesson, Plan, ReportCheck, ReviewIssue } from "./types";
 
 export type TimelineItem =
   | { kind: "plan"; key: string; plan: Plan; awaiting: boolean; approved: boolean; edited: boolean }
@@ -31,6 +31,17 @@ export type TimelineItem =
       durationMs?: number;
     }
   | { kind: "ask"; key: string; question: string; options: string[] }
+  | { kind: "lessons"; key: string; lessons: Lesson[] }
+  | {
+      kind: "reflection";
+      key: string;
+      done: boolean;
+      failures: Failure[];
+      credited: Record<string, string>;
+      added: Lesson[];
+      reinforced: number[];
+      skipped: string[];
+    }
   | {
       kind: "review";
       key: string;
@@ -59,6 +70,7 @@ export interface RunView {
   /** Open review issues: the latest review of each step (or of the whole run in single mode). */
   issues: ReviewIssue[];
   reviewMode: string;
+  lessonsMode: string;
   usage: { input_tokens: number; output_tokens: number; llm_calls: number };
   phase: string;
   error?: string;
@@ -82,6 +94,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
     check: null,
     issues: [],
     reviewMode: "off",
+    lessonsMode: "off",
     usage: { input_tokens: 0, output_tokens: 0, llm_calls: 0 },
     phase: "思考中",
     mode: "single",
@@ -101,6 +114,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
         view.question = d.question;
         view.mode = d.mode ?? "single";
         view.reviewMode = d.review ?? "off";
+        view.lessonsMode = d.lessons ?? "off";
         view.startedAt = e.ts;
         view.phase = "制定计划";
         break;
@@ -114,6 +128,7 @@ export function deriveRun(events: AgentEvent[]): RunView {
         if (d.phase === "analyst" && !view.phase.startsWith("第")) view.phase = "分析中";
         if (d.phase === "report" || d.phase === "report_fix") view.phase = "核查报告";
         if (d.phase === "redo") view.phase = "按审核意见修正";
+        if (d.phase === "reflect") view.phase = "反思员总结教训";
         break;
       case "plan.proposed":
         view.plan = d.plan;
@@ -192,6 +207,20 @@ export function deriveRun(events: AgentEvent[]): RunView {
         else view.items.push({ kind: "review", key: e.id, round: d.round, task: d.task ?? null, findings: d.findings ?? [], ...data });
         latestReview.set(d.task ?? 0, d.issues ?? []);
         view.issues = [...latestReview.values()].flat();
+        break;
+      }
+      case "lessons.injected":
+        view.items.push({ kind: "lessons", key: e.id, lessons: d.lessons ?? [] });
+        break;
+      case "reflection.started":
+        view.phase = "反思中";
+        view.items.push({ kind: "reflection", key: e.id, done: false, failures: [], credited: {}, added: [], reinforced: [], skipped: [] });
+        break;
+      case "reflection.result": {
+        const open = [...view.items].reverse().find((i) => i.kind === "reflection" && !i.done) as Extract<TimelineItem, { kind: "reflection" }> | undefined;
+        const data = { done: true, failures: d.failures ?? [], credited: d.credited ?? {}, added: d.added ?? [], reinforced: d.reinforced ?? [], skipped: d.skipped ?? [] };
+        if (open) Object.assign(open, data);
+        else view.items.push({ kind: "reflection", key: e.id, ...data });
         break;
       }
       case "finding.retracted": {

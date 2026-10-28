@@ -51,6 +51,9 @@ CHECK = "report.check"
 FINDING_RETRACTED = "finding.retracted"  # replaced by a corrected finding after review
 REVIEW_STARTED = "review.started"
 REVIEW = "review.result"  # rule check + model review of a step's findings
+LESSONS_INJECTED = "lessons.injected"  # lessons from earlier runs put into this run's prompt
+REFLECTION_STARTED = "reflection.started"
+REFLECTION = "reflection.result"  # failures of this run -> new or reinforced lessons; credit for used ones
 
 
 class TraceStore:

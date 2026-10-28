@@ -108,10 +108,19 @@ REVIEW_NOTE = (
 )
 
 
+LESSON = (
+    '{"lessons": [{"text": "登记百分比前先用代码 print 出算好的占比，结论里原样引用输出中的数字，不要自己换算", '
+    '"when": "登记占比、增长率等结论时", "scope": "all", "from": [1], "reinforces": null}]}'
+)
+
+
 class DemoChat(ScriptedChat):
     model = "演示模式（预设脚本）"
 
     async def chat(self, messages, tools=None, json_mode=False):
+        if json_mode and messages[0]["content"].startswith("你是反思员"):
+            self.calls.append({"messages": [dict(m) for m in messages], "tools": False, "json_mode": True})
+            return say(LESSON if "已有的教训" in messages[-1]["content"] and "登记百分比前" not in messages[-1]["content"] else '{"lessons": []}')
         if json_mode and "你是审核员" in messages[-1]["content"]:
             # Reviewer calls are answered here so they do not consume the analysis script.
             self.calls.append({"messages": [dict(m) for m in messages], "tools": False, "json_mode": True})

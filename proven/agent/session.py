@@ -30,12 +30,14 @@ class Session:
         kb: KnowledgeBase,
         executor: Executor | None = None,
         session_id: str | None = None,
+        lessons=None,
     ):
         self.id = session_id or uuid.uuid4().hex[:10]
         self.pack = pack
         self.settings = settings
         self.trace = trace
         self.experience = experience
+        self.lessons = lessons  # LessonStore, or None to run without lessons
         self.kb = kb
         self.dir = settings.workspace / "sessions" / self.id
         self.files_dir = self.dir / "files"

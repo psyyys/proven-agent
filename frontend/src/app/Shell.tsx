@@ -26,7 +26,7 @@ export const NAV: { id: ViewId; label: string; short: string; icon: typeof Spark
   { id: "data", label: "数据", short: "数据", icon: Table2, hint: "浏览已加载的数据表" },
   { id: "knowledge", label: "知识库", short: "知识", icon: BookOpen, hint: "文档与检索测试" },
   { id: "rules", label: "审核规则", short: "规则", icon: Scale, hint: "领域规则与审核员陷阱测试" },
-  { id: "experience", label: "经验库", short: "经验", icon: Lightbulb, hint: "已验证的分析经验" },
+  { id: "experience", label: "经验库", short: "经验", icon: Lightbulb, hint: "反思员总结的教训与已验证的代码" },
   { id: "history", label: "运行记录", short: "记录", icon: ScrollText, hint: "历史运行、回放与日志" },
   { id: "evals", label: "评测", short: "评测", icon: Gauge, hint: "评测报告与模式对比" },
   { id: "settings", label: "设置", short: "设置", icon: Settings, hint: "外观、默认选项与运行参数" },

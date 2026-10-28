@@ -105,6 +105,69 @@ export interface ReviewIssue {
   suggestion: string;
 }
 
+export interface Lesson {
+  id: number;
+  label: string;
+  pack: string;
+  scope: "pack" | "all";
+  text: string;
+  when: string;
+  category: string;
+  signatures: string[];
+  source_runs: string[];
+  origin: "auto" | "manual";
+  status: "active" | "retired";
+  pinned: boolean;
+  hits: number;
+  uses: number;
+  helped: number;
+  failed_after: number;
+  score: number;
+  created: number;
+  updated: number;
+}
+
+export interface Failure {
+  kind: string;
+  signature: string;
+  text: string;
+  fix: string;
+  count: number;
+}
+
+export interface EvolvePass {
+  label: string;
+  set: "train" | "test";
+  lessons: string;
+  total: number;
+  passed: number;
+  accuracy_pct: number;
+  failures: Record<string, number>;
+  failures_total: number;
+  tokens: number;
+  llm_calls: number;
+  lessons_active: number;
+  lessons_used_avg: number;
+  results: (EvalResult & { failures: Record<string, number>; lessons_used: number; tokens: number })[];
+}
+
+export interface EvolveListItem {
+  name: string;
+  pack: string;
+  model: string;
+  mode: string;
+  review: string;
+  time: string;
+  rounds: EvolvePass[];
+}
+
+export interface EvolveReport extends EvolveListItem {
+  train: string[];
+  test: string[];
+  training: EvolvePass[];
+  lessons: Lesson[];
+}
+
 export interface Rule {
   id: string;
   name: string;
@@ -205,6 +268,7 @@ export interface RuntimeSettings {
   rerank_model: string | null;
   mode: "single" | "multi";
   review: "off" | "rules" | "full";
+  lessons: "off" | "use" | "learn";
   step_budget: number;
   max_steps: number;
   llm_temperature: number;

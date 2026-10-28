@@ -21,6 +21,9 @@ class Run:
     auto_approve: bool = True
     mode: str | None = None  # overrides Settings.mode for this run
     review_mode: str | None = None  # overrides Settings.review: off | rules | full
+    lessons_mode: str | None = None  # overrides Settings.lessons: off | use | learn
+    defer_reflection: bool = False  # the caller reflects later, e.g. the eval harness after scoring
+    lesson_ids: list[int] = field(default_factory=list)  # lessons put into this run's prompt
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
     status: str = "pending"  # pending | planning | awaiting_approval | running | reporting | done | needs_input | cancelled | error
     plan: dict[str, Any] | None = None
@@ -47,6 +50,8 @@ class Run:
             "usage": self.usage,
             "mode": self.mode,
             "review_mode": self.review_mode,
+            "lessons_mode": self.lessons_mode,
+            "lesson_ids": self.lesson_ids,
             "issues": [i.to_dict() for i in self.issues],
         }
 

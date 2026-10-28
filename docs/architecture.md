@@ -1,4 +1,4 @@
-# 架构设计（v0.4）
+# 架构设计（v0.5）
 
 > 状态：第一版已实现。项目名：**Proven**。本文档描述当前实现；与原计划不同的地方在第 17 节列出。
 
@@ -16,7 +16,7 @@
 
 ①–④ 是业界常见做法，⑤ 是本项目的特色。工具调用的底层机制是 Function Calling（用 JSON Schema 描述工具）。
 
-多 Agent 模式只替换第 ② 层：Orchestrator-Workers（调度器按计划逐步派出上下文独立的分析员，第 1 期已实现）+ Reflection（审核员按领域规则和方法要点检查，第 2 期已实现）+ Reflexion（反思员从失败中总结经验，第 3 期）。流程由代码控制而不是模型自由对话，①③④⑤ 不变。详见 [multi-agent.md](multi-agent.md)。
+多 Agent 模式只替换第 ② 层：Orchestrator-Workers（调度器按计划逐步派出上下文独立的分析员，第 1 期已实现）+ Reflection（审核员按领域规则和方法要点检查，第 2 期已实现）+ Reflexion（反思员从失败中总结经验，第 3 期已实现）。流程由代码控制而不是模型自由对话，①③④⑤ 不变。详见 [multi-agent.md](multi-agent.md)。
 
 审核员同样适用于单 Agent 模式（执行结束后审核一次），它把第 ⑤ 层从"数字有没有来源"扩展到"方法和表述站不站得住"：
 
@@ -293,7 +293,7 @@ tests/              # 测试
 
 ## 15. 向多 Agent 演进
 
-第 1 期（分析员子代理）已实现，`PROVEN_MODE=multi` 开启；第 2 期审核员已实现，`PROVEN_REVIEW` 控制（off / rules / full，默认 full），单 Agent 和多 Agent 模式都生效；第 3 期反思员为设计稿。完整设计、取舍和评测方法见 [multi-agent.md](multi-agent.md)，领域规则格式见 [domain-rules-template.md](domain-rules-template.md)。
+第 1 期（分析员子代理）已实现，`PROVEN_MODE=multi` 开启；第 2 期审核员已实现，`PROVEN_REVIEW` 控制（off / rules / full，默认 full）；第 3 期反思员已实现，`PROVEN_LESSONS` 控制（off / use / learn，默认 learn）。审核员和反思员在单 Agent 和多 Agent 模式下都生效。完整设计、取舍和评测方法见 [multi-agent.md](multi-agent.md)，领域规则格式见 [domain-rules-template.md](domain-rules-template.md)。
 
 ## 16. 待确认
 

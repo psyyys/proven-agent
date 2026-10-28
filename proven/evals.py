@@ -32,6 +32,7 @@ class Question:
     answer_code: str | None = None
     expect: str | None = None  # "refuse" | "doc"
     tol: float = 0.005
+    split: str | None = None  # "train" | "test" for the evolution experiment; assigned automatically if omitted
 
 
 @dataclass
@@ -96,55 +97,63 @@ async def compute_references(service: Service, pack: Pack, questions: list[Quest
 
 def score(q: Question, run, expected: list[float] | None) -> tuple[bool, list[float], str]:
     got: list[float] = []
-    for f in run.findings.items:
+    for f in run.findings.active():  # findings replaced after review do not count
         got += f.numbers
         if f.value is not None:
             got.append(f.value)
     if q.expect == "refuse":
-        numeric = [f for f in run.findings.items if f.numbers]
+        numeric = [f for f in run.findings.active() if f.numbers]
         said_no = (run.plan or {}).get("answerable") is False or any(w in run.report for w in REFUSAL_WORDS)
         return (not numeric and said_no), got, "" if said_no else "没有明确拒答"
     if q.expect == "doc":
-        ok = any(f.evidence_type in ("doc", "mixed") for f in run.findings.items)
+        ok = any(f.evidence_type in ("doc", "mixed") for f in run.findings.active())
         return ok, got, "" if ok else "没有引用知识库片段"
     missing = [e for e in expected or [] if not any(_close(g, e, q.tol) for g in got)]
     return not missing, got, f"未找到 {missing}" if missing else ""
 
 
+async def ask(service: Service, pack: Pack, q: Question, refs: dict[str, list[float]], mode: str | None = None,
+              review: str | None = None, lessons: str | None = None, defer_reflection: bool = False):
+    """Run one question in a fresh session and score it. Returns (Result, Run)."""
+    session = await service.create_session(pack.id)
+    started = time.monotonic()
+    try:
+        if q.dataset:
+            await session.load_demo(q.dataset)
+        run = service.start_run(session, q.question, auto_approve=True, mode=mode, review=review, lessons=lessons,
+                                defer_reflection=defer_reflection)
+        await service.wait(run.id)
+        passed, got, note = score(q, run, refs.get(q.id))
+        result = Result(
+            id=q.id, type=q.type, question=q.question, passed=passed and run.status == "done",
+            expected=refs.get(q.id) or q.expect, got=got, status=run.status,
+            note=note or ("" if run.status == "done" else f"状态 {run.status}"),
+            llm_calls=run.usage["llm_calls"], input_tokens=run.usage["input_tokens"],
+            output_tokens=run.usage["output_tokens"], seconds=round(time.monotonic() - started, 1), run_id=run.id,
+        )
+    finally:
+        await service.close_session(session.id)
+    return result, run
+
+
 async def run_eval(service: Service, pack_id: str, only: list[str] | None = None, out_dir: Path | None = None,
-                   mode: str | None = None, review: str | None = None) -> dict[str, Any]:
+                   mode: str | None = None, review: str | None = None, lessons: str = "off") -> dict[str, Any]:
+    """Lessons are off by default so that comparisons between modes are not affected by what earlier
+    eval runs taught; `proven evolve` measures the effect of lessons separately."""
     pack = service.packs[pack_id]
     questions = [q for q in load_questions(pack) if not only or q.id in only]
     refs = await compute_references(service, pack, questions)
     results: list[Result] = []
     for q in questions:
-        session = await service.create_session(pack.id)
-        started = time.monotonic()
-        try:
-            if q.dataset:
-                await session.load_demo(q.dataset)
-            run = service.start_run(session, q.question, auto_approve=True, mode=mode, review=review)
-            await service.wait(run.id)
-            passed, got, note = score(q, run, refs.get(q.id))
-            results.append(
-                Result(
-                    id=q.id, type=q.type, question=q.question, passed=passed and run.status == "done",
-                    expected=refs.get(q.id) or q.expect, got=got, status=run.status,
-                    note=note or ("" if run.status == "done" else f"状态 {run.status}"),
-                    llm_calls=run.usage["llm_calls"], input_tokens=run.usage["input_tokens"],
-                    output_tokens=run.usage["output_tokens"], seconds=round(time.monotonic() - started, 1), run_id=run.id,
-                )
-            )
-        finally:
-            await service.close_session(session.id)
-        r = results[-1]
+        r, _ = await ask(service, pack, q, refs, mode=mode, review=review, lessons=lessons)
+        results.append(r)
         print(f"  {'✓' if r.passed else '✗'} {r.id} [{r.type}] {r.question[:40]}  {r.note}")
 
     summary = _summarize(results)
     mode = mode or service.settings.mode
     review = review or service.settings.review
-    report = {"pack": pack_id, "model": service.model.model, "mode": mode, "review": review, "time": time.strftime("%Y-%m-%d %H:%M"),
-              "summary": summary, "results": [asdict(r) for r in results]}
+    report = {"pack": pack_id, "model": service.model.model, "mode": mode, "review": review, "lessons": lessons,
+              "time": time.strftime("%Y-%m-%d %H:%M"), "summary": summary, "results": [asdict(r) for r in results]}
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
         stem = f"{time.strftime('%Y%m%d-%H%M%S')}-{pack_id}-{mode}-review_{review}-{service.model.model.replace('/', '_')}"

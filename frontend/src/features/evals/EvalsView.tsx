@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { CircleCheck, CircleX, Gauge, RefreshCw } from "lucide-react";
+import { CircleCheck, CircleX, Gauge, ListChecks, RefreshCw, Sprout } from "lucide-react";
 import { api } from "../../lib/api";
 import type { EvalListItem, EvalReport } from "../../lib/types";
 import { useStore } from "../../app/store";
-import { Badge, Bar, Card, cx, Empty, Kbd, Spinner } from "../../ui/kit";
+import { Badge, Bar, Card, cx, Empty, Kbd, Spinner, Tabs } from "../../ui/kit";
+import { EvolvePanel } from "./EvolvePanel";
 
 function parseRatio(v: string) {
   const [a, b] = v.split("/").map(Number);
@@ -72,6 +73,25 @@ function Compare({ a, b }: { a: EvalListItem; b: EvalListItem }) {
 }
 
 export function EvalsView() {
+  const [tab, setTab] = useState<"qa" | "evolve">("qa");
+  return (
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b border-line bg-panel px-3">
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          items={[
+            { id: "qa", label: "问答评测", icon: <ListChecks size={15} /> },
+            { id: "evolve", label: "经验进化", icon: <Sprout size={15} /> },
+          ]}
+        />
+      </div>
+      <div className="min-h-0 flex-1">{tab === "qa" ? <QaEvals /> : <EvolvePanel />}</div>
+    </div>
+  );
+}
+
+function QaEvals() {
   const { fail } = useStore();
   const [items, setItems] = useState<EvalListItem[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
