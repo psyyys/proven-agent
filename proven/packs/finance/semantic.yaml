@@ -1,0 +1,216 @@
+datasets:
+  macro:
+    description: 宏观经济数据。美国季度数据每行一个季度；世界银行面板每行一个经济体一年；10 年期国债每行一个月。
+    tables:
+      us_macro_quarterly:
+        description: 美国宏观季度数据，1950Q1-2000Q4，共 204 个季度（Greene 2003，表 F5.1）
+        primary_key: quarter
+        columns:
+          quarter: 季度，如 1950Q1
+          date: 季度第一天的日期
+          gdp: 实际 GDP（十亿美元，不变价）
+          consumption: 实际个人消费支出（十亿美元）
+          invest: 实际私人投资（十亿美元）
+          government: 实际政府支出（十亿美元）
+          dpi: 实际个人可支配收入（十亿美元）
+          cpi: 消费者价格指数（指数，不是通胀率）
+          m1: 名义货币供应量 M1（十亿美元）
+          tbill: 90 天国库券利率，季度内各月末的平均值（%，年率）
+          unemp: 失业率（%）
+          population: 人口（百万，由年末数按固定季度增长率插值）
+          inflation: 通胀率（%，年率），= 400 × ln(cpi_t / cpi_t-1)，第一个季度缺失
+          interest: 事后实际利率（%），≈ tbill - inflation，第一个季度缺失
+      us_treasury_10y:
+        description: 美国 10 年期国债收益率，月度，1953-04 起（美联储 H.15）
+        primary_key: date
+        columns:
+          date: 月份（每月 1 日）
+          yield_10y: 10 年期国债名义收益率（%，年率）
+      world_macro:
+        description: 世界银行各经济体年度宏观指标，1960 年起；包含 217 个经济体和 48 个区域/收入组汇总
+        columns:
+          country: 经济体或汇总名称（英文）
+          code: 世界银行三字母代码，如 CHN、USA、WLD
+          is_aggregate: 是否为区域或收入组汇总（World、East Asia & Pacific、High income 等）；跨国加总、排名、平均前必须排除 True 的行
+          year: 年份
+          gdp_usd: GDP（现价美元，名义值；跨年比较包含价格和汇率变化）
+          population: 人口（人）
+          inflation_cpi_pct: 通胀率，按消费者价格指数（%，年度），世界银行指标 FP.CPI.TOTL.ZG
+          inflation_deflator_pct: 通胀率，按 GDP 平减指数（%，年度），世界银行指标 NY.GDP.DEFL.KD.ZG
+    relationships:
+      - us_macro_quarterly 与 us_treasury_10y 可按日期对齐（季度取季内月度均值）
+    metrics:
+      - name: 实际 GDP 增长率
+        aliases: [GDP 增速, 经济增长率]
+        definition: 实际 GDP 相对上期的增长率
+        formula: 季度环比 = gdp_t / gdp_t-1 - 1；折年率 = (gdp_t / gdp_t-1)^4 - 1（growth_rate(gdp, 1, annualize=4)）；同比 = gdp_t / gdp_t-4 - 1
+        notes: 结论中写明是环比、环比折年率还是同比。world_macro.gdp_usd 是名义美元，用它算的增长率不是实际增长率
+      - name: 通胀率
+        aliases: [CPI 通胀, 物价上涨率]
+        definition: 价格水平的变化率
+        formula: us_macro_quarterly.inflation 已给出（年率，%）；年度同比 = cpi_t / cpi_t-4 - 1
+        notes: cpi 是价格指数，inflation 才是通胀率，不要混用
+      - name: 实际利率
+        aliases: [事后实际利率]
+        definition: 名义利率扣除通胀后的利率（费雪关系）
+        formula: 实际利率 ≈ 名义利率 - 通胀率；us_macro_quarterly.interest 已给出
+      - name: 奥肯定律
+        aliases: [Okun's law, 奥肯系数]
+        definition: 失业率变化与产出增长的负相关关系
+        formula: Δunemp_t = a + b × 实际 GDP 增长率（折年率）_t；b 为奥肯系数，a / (-b) 为维持失业率不变所需的增长率
+        notes: 系数随时期变化，结论要写样本期
+      - name: 菲利普斯曲线
+        aliases: [Phillips curve]
+        definition: 通胀与失业率的关系
+        formula: 原始形式 inflation = a + b × unemp；预期修正形式 Δinflation = a + b × unemp（b < 0 时自然失业率 ≈ -a / b）
+        notes: 1970 年代滞胀之后原始形式不再成立，应使用预期修正形式并写明样本期
+      - name: 产出缺口
+        aliases: [output gap]
+        definition: 实际产出偏离潜在产出的百分比
+        formula: 对 ln(gdp) 做 HP 滤波（季度 λ=1600），周期成分 × 100
+        notes: HP 滤波在样本两端不可靠
+      - name: 期限利差
+        aliases: [10 年期与 3 个月利差]
+        definition: 长期利率减短期利率，常用于判断经济周期
+        formula: yield_10y（季内均值）- tbill
+      - name: 人均 GDP
+        definition: GDP 除以人口
+        formula: gdp_usd / population（现价美元）
+
+  markets:
+    description: 资本市场数据。S&P 500 月度序列每行一个月；行业超额收益每行一个月。
+    tables:
+      sp500_monthly:
+        description: S&P 500 月度数据（Robert Shiller），1871-01 起；2023-07 起只有 sp500 一列有值
+        primary_key: date
+        columns:
+          date: 月份（每月 1 日）
+          sp500: 指数点位，为当月每日收盘价的平均值（不是月末值）
+          dividend: 每股股息（指数口径，过去 12 个月合计，月度插值）；2023-07 起为 0 表示缺失
+          earnings: 每股盈利（指数口径，过去 12 个月合计）；2023-07 起为 0 表示缺失
+          cpi: 消费者价格指数；2023-07 起为 0 表示缺失
+          long_rate: 长期利率（10 年期国债收益率，%）；2023-07 起为 0 表示缺失
+          real_price: 按 CPI 调整后的实际指数点位
+          real_dividend: 实际股息
+          real_earnings: 实际盈利
+          pe10: 周期调整市盈率 CAPE = 实际价格 / 过去 10 年实际盈利均值；1881 年以前和 2023-07 起为 0 表示缺失
+      capm_monthly:
+        description: 1960-01 至 2002-12 的月度收益（%），共 516 个月，来自 Kenneth French 数据库
+        primary_key: month
+        columns:
+          month: 月份，如 1960-01
+          rfood: 食品行业组合的超额收益（已减去无风险收益，%）
+          rdur: 耐用消费品行业组合的超额收益（%）
+          rcon: 建筑行业组合的超额收益（%）
+          rmrf: 市场组合的超额收益（市场收益 - 无风险收益，%）
+          rf: 无风险收益（1 个月国库券，月度，%）
+    metrics:
+      - name: 收益率
+        aliases: [回报率, 简单收益率]
+        definition: 一期内的价格变化率（价格收益）；含股息为总收益
+        formula: r_t = P_t / P_t-1 - 1（to_returns）；对数收益 = ln(P_t / P_t-1)
+        notes: sp500_monthly 的 sp500 不含股息；总收益可近似为价格收益 + dividend / sp500 / 12
+      - name: 年化收益率
+        aliases: [CAGR, 复合年增长率]
+        definition: 把多期收益折算为每年的复合增长率
+        formula: (∏(1 + r))^(每年期数 / 期数) - 1（annualized_return，收益用小数）
+        notes: 算术平均 × 12 会高估复合收益
+      - name: 年化波动率
+        aliases: [波动率, 标准差]
+        definition: 收益率的标准差折算为年度
+        formula: 期收益标准差 × √每年期数（月度 √12，日度 √252）
+        notes: sp500 是月内均价，用它算的波动率偏低
+      - name: 夏普比率
+        aliases: [Sharpe ratio]
+        definition: 每单位总风险的超额收益
+        formula: 年化夏普 = mean(r - rf) / std(r - rf) × √每年期数（sharpe_ratio）
+        notes: capm_monthly 的 rfood、rdur、rcon、rmrf 已是超额收益，不能再减 rf；结论写明是否年化、频率和样本期
+      - name: 最大回撤
+        aliases: [max drawdown, MDD]
+        definition: 从历史高点到之后低点的最大跌幅
+        formula: min(P_t / max(P_0..P_t) - 1)（max_drawdown），为负数或写成"下跌 X%"
+      - name: CAPM β
+        aliases: [贝塔, beta, 系统性风险]
+        definition: 资产超额收益对市场超额收益的敏感度
+        formula: 回归 r_i - r_f = α + β (r_m - r_f) + ε（capm）
+        notes: 写明样本期和数据频率；β 本身不说明收益好坏
+      - name: 詹森 α
+        aliases: [alpha, α, 超额收益 α]
+        definition: CAPM 回归的截距，市场风险解释不了的平均超额收益
+        formula: capm(...)["alpha"]；年化约为月度 α × 12
+        notes: 判断是否显著要看 t 值或 p 值
+      - name: 股权风险溢价
+        aliases: [ERP, 盈利收益率差]
+        definition: 股票预期收益超过无风险利率的部分；常用近似为盈利收益率减长期利率
+        formula: earnings / sp500 × 100 - long_rate（%）
+      - name: CAPE
+        aliases: [周期调整市盈率, 席勒市盈率, PE10]
+        definition: 实际价格除以过去 10 年实际盈利的平均值
+        formula: sp500_monthly.pe10（0 表示缺失）
+
+  firms:
+    description: 公司层面的微观数据。每行一家公司，为某一时点的快照。
+    tables:
+      sp500_firms:
+        description: S&P 500 成分股财务快照（Yahoo Finance），共 503 行；原始数据没有注明日期
+        primary_key: symbol
+        columns:
+          symbol: 股票代码
+          name: 公司名称
+          sub_industry: GICS 子行业（如 Semiconductors）
+          sector: GICS 一级行业（如 Information Technology），由子行业对应得到，少数为空
+          price: 股价（美元）
+          pe: 市盈率 = 股价 / 每股收益；亏损公司为负或缺失
+          dividend_yield: 股息率（小数，0.0179 表示 1.79%）
+          eps: 每股收益（美元）
+          low_52w: 52 周最低价
+          high_52w: 52 周最高价
+          market_cap: 市值（美元，原始单位，83294183424 ≈ 833 亿）
+          ebitda: 息税折旧摊销前利润（美元）
+          ps: 市销率 = 市值 / 营业收入
+          pb: 市净率 = 股价 / 每股净资产
+    metrics:
+      - name: 行业估值
+        aliases: [行业市盈率]
+        definition: 同一行业公司的估值水平
+        formula: 用中位数（median）而不是平均数，并排除 pe ≤ 0 或缺失的公司
+        notes: 市盈率分布右偏，少数极端值会严重拉高平均数
+      - name: 市值加权
+        definition: 按市值作为权重的平均，代表指数口径
+        formula: sum(x × market_cap) / sum(market_cap)
+      - name: 距 52 周高点
+        definition: 当前价格相对 52 周最高价的位置
+        formula: price / high_52w - 1
+
+  wages:
+    description: 个人层面的微观数据。每行一名劳动者（1985 年 5 月美国当前人口调查的随机样本）。
+    tables:
+      cps1985_wages:
+        description: 534 名劳动者的工资与个人特征
+        columns:
+          wage: 小时工资（美元，1985 年名义值）
+          education: 受教育年限
+          experience: 潜在工作经验（年）= 年龄 - 受教育年限 - 6
+          age: 年龄
+          ethnicity: 种族（cauc 白人、hispanic 西班牙裔、other 其他）
+          region: 是否居住在南方（south / other）
+          gender: 性别（male / female）
+          occupation: 职业（worker 技术工人、technical 专业技术、services 服务、office 文职、sales 销售、management 管理）
+          sector: 行业（manufacturing 制造业及采矿、construction 建筑、other 其他）
+          union: 是否为工会成员（yes / no）
+          married: 是否已婚（yes / no）
+    metrics:
+      - name: 明瑟方程
+        aliases: [Mincer equation, 工资方程]
+        definition: 对数工资对受教育年限和工作经验的回归
+        formula: ln(wage) = β0 + β1·education + β2·experience + β3·experience² + ε
+      - name: 教育回报率
+        aliases: [教育收益率]
+        definition: 多受一年教育带来的工资提高比例
+        formula: 明瑟方程中 education 的系数 β1（近似百分比）；精确值为 exp(β1) - 1
+        notes: 这是相关意义上的估计，存在能力偏差等遗漏变量问题，不能直接解读为因果效应
+      - name: 性别工资差距
+        aliases: [gender gap]
+        definition: 男女平均工资的差异
+        formula: 原始差距 = 男性均值 / 女性均值 - 1；控制其他变量后看回归中性别虚拟变量的系数
+        notes: 原始差距与控制变量后的差距含义不同，结论要写明是哪一种

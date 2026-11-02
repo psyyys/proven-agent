@@ -1,0 +1,129 @@
+# 审核员陷阱测试（金融）。格式见 proven/packs/water/evals/review_cases.yaml
+
+cases:
+  # ---------- 取值范围 ----------
+  - id: f-r01
+    claim: S&P 500 在 1929–1932 年的最大回撤为 -184.8%
+    code: "dd = max_drawdown(to_returns(sp.sp500))  # 误把收益率序列当成价格"
+    expect: [F001]
+    note: 对收益率序列而不是价格序列求回撤
+
+  - id: f-r02
+    claim: 食品行业 1960–2002 年的年化夏普比率为 5.84（月度数据）
+    expect: [F002]
+    note: 漏除标准差或年化方法错误
+
+  - id: f-r03
+    claim: 2000 年第四季度美国失业率为 400%
+    expect: [F003]
+    note: 把百分数又乘了 100
+
+  - id: f-r04
+    claim: 公用事业行业的平均股息率为 342%
+    code: "print(firms.groupby('sector').dividend_yield.mean() * 100 * 100)"
+    expect: [F004]
+    note: 股息率本身是小数，乘了两次 100
+
+  - id: f-r05
+    claim: 该公司市盈率为 -35.2，估值显著低于行业
+    expect: [F005, G002]
+    note: 亏损公司的负市盈率被当成低估值；"显著"也没有检验支撑
+
+  # ---------- 适用条件 ----------
+  - id: f-c01
+    claim: 市场组合 1960–2002 年的夏普比率为 0.09
+    expect: [F101]
+    note: 没写频率和是否年化（这是月度未年化的值）
+
+  - id: f-c02
+    claim: 耐用品行业的 β 为 1.11，波动大于市场
+    expect: [F102]
+    note: 没有样本期
+
+  - id: f-c03
+    claim: 均线策略回测年化收益 18.5%，跑赢基准 6.2 个百分点
+    expect: [F103, F105]
+    note: 没说交易成本，也没说明幸存者偏差
+
+  - id: f-c04
+    claim: 菲利普斯曲线成立：失业率每上升 1 个百分点，通胀率下降 0.5 个百分点
+    expect: [F104]
+    note: 没有样本期，而这一关系在不同时期差异很大
+
+  - id: f-s01
+    claim: 2010–2020 年中国 GDP 增长率年均 8.2%
+    code: "g = cagr(cn.gdp_usd.iloc[0], cn.gdp_usd.iloc[-1], 10)"
+    expect: [F201]
+    note: 用现价美元 GDP 算增长，却没有说明是名义美元口径
+
+  - id: f-s02
+    claim: 食品行业获得了显著为正的 α，年化 4.07%
+    expect: [F202, G002, F102]
+    note: 没给出 t 值或 p 值，也没有样本期
+
+  - id: f-s03
+    claim: 耐用品行业 α 显著为正（t = 0.49）
+    expect: [F202, G002, F102]
+    note: t 值远小于 1.96，不显著；也没有样本期
+
+  # ---------- 只有模型审核能发现的问题 ----------
+  - id: f-l01
+    claim: 市场组合 1960–2002 年的年化夏普比率为 -0.05（月度数据年化）
+    code: "print(round(sharpe_ratio(capm.rmrf, 12, rf=capm.rf), 2))"
+    evidence: "-0.05"
+    expect: [llm]
+    note: rmrf 已经是超额收益，又减了一次 rf
+
+  - id: f-l02
+    claim: M1 每增加 1 十亿美元，实际 GDP 增加 7.9 十亿美元（R² = 0.97），货币供应决定经济规模
+    code: "print(ols(macro, 'gdp', 'm1'))"
+    evidence: "OLS（n=204，R²=0.9712）\n coef  m1  7.9"
+    expect: [llm]
+    note: 两个趋势序列的水平值回归（伪回归），并且写成了因果
+
+  - id: f-l03
+    claim: 1950–2000 年数据显示失业率越高通胀越高，菲利普斯曲线的斜率为 +0.31
+    code: "print(ols(macro, 'inflation', 'unemp'))"
+    evidence: "unemp  0.3055  t=2.03  p=0.0435"
+    expect: [llm]
+    note: 全样本的原始菲利普斯回归受滞胀影响，应改用预期修正形式或分时期
+
+  - id: f-l04
+    claim: 全世界 2020 年 GDP 合计 262.4 万亿美元
+    code: "print(world[world.year == 2020].gdp_usd.sum() / 1e12)"
+    evidence: "262.4"
+    expect: [llm]
+    note: 区域和收入组汇总行没有排除，重复计算
+
+  # ---------- 正确的结论（不应被拦） ----------
+  - id: f-ok01
+    claim: S&P 500 在 1929-09 至 1932-06 的最大回撤为 -84.8%（月均价数据）
+    expect: []
+
+  - id: f-ok02
+    claim: 市场组合 1960–2002 年的年化夏普比率为 0.32（月度超额收益年化）
+    expect: []
+
+  - id: f-ok03
+    claim: 1960–2002 年月度数据估计，耐用品行业的 β 为 1.11，α 与 0 没有显著差异（t = 0.49，p = 0.63）
+    expect: []
+
+  - id: f-ok04
+    claim: 1950–2000 年美国季度数据，奥肯系数为 -0.068：实际 GDP 增长率（折年率）每高 1 个百分点，失业率变化低 0.068 个百分点
+    expect: []
+
+  - id: f-ok05
+    claim: 信息技术行业的市盈率中位数为 31.4（排除亏损公司）
+    expect: []
+
+  - id: f-ok06
+    claim: 2010–2020 年按现价美元计算，中国 GDP 年均增长 8.2%（名义美元口径，含汇率变化）
+    expect: []
+
+  - id: f-ok07
+    claim: 1960–2002 年月度数据，食品行业年化 α 为 4.07%，显著为正（t = 2.66，p = 0.008）
+    expect: []
+
+  - id: f-ok08
+    claim: 1985 年数据中，受教育年限每多一年，小时工资平均高约 9.0%（明瑟方程，稳健标准误，p < 0.001）
+    expect: []

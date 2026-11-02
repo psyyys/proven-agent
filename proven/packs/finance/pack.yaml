@@ -1,0 +1,62 @@
+id: finance
+name: 金融 · 宏观与微观经济
+description: 宏观经济（增长、通胀、失业、利率）、资本市场（收益、风险、CAPM、估值）与微观数据（公司财务、个人工资）的分析。
+kit: proven.kit.finance
+datasets:
+  - id: us_macro
+    name: 美国宏观季度数据（1950-2000）
+    description: 实际 GDP、消费、投资、政府支出、可支配收入、CPI、M1、国库券利率、失业率、通胀率等 12 个季度指标（Greene《计量经济分析》教材数据），附 10 年期国债月度收益率（1953 年起）。
+    semantic: macro
+    source: https://github.com/vincentarelbundock/Rdatasets （R 包 AER::USMacroG）；美联储 H.15（datahub.io）
+    license: GPL（Rdatasets）；美联储数据为公共领域
+    files:
+      - finance/us_macro_quarterly.csv
+      - finance/us_treasury_10y.csv
+  - id: world_macro
+    name: 世界银行各国宏观面板（1960 年起）
+    description: 200 多个经济体及区域汇总的年度 GDP（现价美元）、人口、CPI 通胀率、GDP 平减指数通胀率。
+    semantic: macro
+    source: https://github.com/datasets （World Bank WDI，经 datahub.io 整理）
+    license: ODC-PDDL
+    files:
+      - finance/world_macro.csv
+  - id: sp500_market
+    name: S&P 500 月度数据（1871 年起，Shiller）
+    description: 指数点位、股息、盈利、CPI、长期利率、CAPE（PE10）的月度序列，附 10 年期国债收益率。
+    semantic: markets
+    source: https://github.com/datasets/s-and-p-500 （Robert Shiller 数据，2023-07 后由 FRED 延续指数点位）
+    license: ODC-PDDL
+    files:
+      - finance/sp500_monthly.csv
+      - finance/us_treasury_10y.csv
+  - id: capm
+    name: 行业超额收益（1960-2002，月度）
+    description: 食品、耐用品、建筑三个行业组合及市场组合的月度超额收益，以及无风险收益率（单位：%），可用于 CAPM 和风险调整收益分析。
+    semantic: markets
+    source: https://github.com/vincentarelbundock/Rdatasets （R 包 Ecdat::Capm，原始数据来自 Kenneth French 数据库）
+    license: GPL（Rdatasets）
+    files:
+      - finance/capm_monthly.csv
+  - id: sp500_firms
+    name: S&P 500 成分股财务快照
+    description: 约 500 家公司某一时点的股价、市盈率、市净率、市销率、股息率、每股收益、市值、EBITDA 及所属行业。
+    semantic: firms
+    source: https://github.com/datasets/s-and-p-500-companies-financials （来自 Yahoo Finance）
+    license: ODC-PDDL
+    files:
+      - finance/sp500_firms.csv
+  - id: cps_wages
+    name: 美国工资调查（CPS 1985）
+    description: 534 名劳动者的小时工资、受教育年限、工作经验、性别、种族、行业、职业、工会身份等，用于工资决定因素等微观经济分析。
+    semantic: wages
+    source: https://github.com/vincentarelbundock/Rdatasets （R 包 AER::CPS1985，Berndt 1991）
+    license: GPL（Rdatasets）
+    files:
+      - finance/cps1985_wages.csv
+examples:
+  - 用 1950-2000 年美国季度数据检验奥肯定律：GDP 增长率每提高 1 个百分点，失业率变化多少？
+  - 2000 年以来中国、美国、日本、德国的 GDP 增速和通胀率有什么差异？
+  - S&P 500 自 1950 年以来的年化收益率、年化波动率和最大回撤是多少？
+  - 用 CAPM 估计食品、耐用品、建筑三个行业的 β 和 α，哪个行业的风险调整后表现最好？
+  - S&P 500 各行业的市盈率中位数是多少？哪个行业估值最高？
+  - 用明瑟方程估计 1985 年美国的教育回报率，男女工资差距有多大？

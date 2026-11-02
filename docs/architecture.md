@@ -34,7 +34,7 @@
 一个**可追溯的数据分析型 Agent**，带 RAG 能力，网页交互。
 
 - 通用核心 + 领域插件：先做通用底座，再通过插件适配不同专业方向
-- 第一批插件：**商业（信息系统方向）**、**水利（水资源 / 水文方向）**
+- 第一批插件：**商业（信息系统方向）**、**水利（水资源 / 水文方向）**；之后加入 **金融（宏观与微观经济）**
 - 核心原则：**结论里的每个数字都必须来自真实运行的代码，每条知识都必须来自可引用的原文**，不允许黑盒
 
 申请方向优先级：商业分析 > 水利 > HCI（HCI 暂不做用户研究，但交互要做好）。
@@ -253,7 +253,7 @@ proven/
 ├── experience.py   # 经验库
 ├── trace.py        # 追溯事件（SQLite + 实时订阅 + OTel 导出）
 ├── kit/            # 预加载到内核的辅助函数：core / business / water
-├── packs/          # 领域包：general / business / water（测试题在各包的 evals/ 下）
+├── packs/          # 领域包：general / business / water / finance（测试题在各包的 evals/ 下）
 ├── evals.py        # 评测
 ├── notebook.py     # Notebook 导出
 ├── service.py      # 会话与运行管理（API、CLI、评测共用）

@@ -1,0 +1,140 @@
+questions:
+  # ---------- 基础 ----------
+  - id: f01
+    type: basic
+    dataset: cps_wages
+    question: 1985 年工资调查样本中，劳动者的平均小时工资是多少美元？
+    answer_code: answer = round(cps1985_wages.wage.mean(), 2)
+
+  - id: f02
+    type: basic
+    dataset: world_macro
+    question: 2020 年美国的 CPI 通胀率是多少？
+    answer_code: |
+      answer = round(float(world_macro.query("code == 'USA' and year == 2020").inflation_cpi_pct.iloc[0]), 2)
+
+  # ---------- 汇总 ----------
+  - id: f03
+    type: aggregate
+    dataset: sp500_firms
+    question: 信息技术（Information Technology）行业公司市盈率的中位数是多少？排除市盈率为负或缺失的公司。
+    answer_code: |
+      d = sp500_firms[(sp500_firms.sector == "Information Technology") & (sp500_firms.pe > 0)]
+      answer = round(float(d.pe.median()), 2)
+    tol: 0.01
+
+  - id: f04
+    type: aggregate
+    dataset: world_macro
+    question: 2020 年 GDP（现价美元）最高的 5 个国家合计占世界 GDP 的比例是多少？
+    answer_code: |
+      y = world_macro[world_macro.year == 2020]
+      top5 = y[~y.is_aggregate].nlargest(5, "gdp_usd").gdp_usd.sum()
+      world = float(y.query("code == 'WLD'").gdp_usd.iloc[0])
+      answer = round(top5 / world * 100, 2)
+    tol: 0.01
+
+  # ---------- 多步计算 ----------
+  - id: f05
+    type: multistep
+    dataset: capm
+    question: 1960-2002 年市场组合的年化夏普比率是多少（用月度数据）？
+    answer_code: answer = round(sharpe_ratio(capm_monthly.rmrf, 12, already_excess=True), 3)
+    tol: 0.02
+
+  - id: f06
+    type: multistep
+    dataset: capm
+    question: 用 CAPM 估计食品行业 1960-2002 年的 β 和年化 α（月度数据）分别是多少？
+    answer_code: |
+      r = capm(capm_monthly.rfood, capm_monthly.rmrf, 12)
+      answer = [round(r["beta"], 3), round(r["alpha_annual"], 2)]
+    tol: 0.02
+
+  - id: f07
+    type: multistep
+    dataset: sp500_market
+    question: 1950 年 1 月到 2023 年 6 月，S&P 500 价格指数（不含股息）的年化收益率是多少？
+    answer_code: |
+      s = sp500_monthly[(sp500_monthly.date >= "1950-01-01") & (sp500_monthly.date <= "2023-06-01")].sp500
+      answer = round(annualized_return(to_returns(s), 12) * 100, 2)
+    tol: 0.02
+
+  - id: f08
+    type: multistep
+    dataset: world_macro
+    question: 按现价美元计算，中国 GDP 从 2000 年到 2020 年的年均增长率是多少？
+    answer_code: |
+      cn = world_macro.query("code == 'CHN'").set_index("year").gdp_usd
+      answer = round(cagr(cn[2000], cn[2020], 20) * 100, 2)
+    tol: 0.01
+
+  # ---------- 领域方法 ----------
+  - id: f09
+    type: domain
+    dataset: sp500_market
+    question: S&P 500 历史上（用月度数据）最大回撤是多少？发生在什么时期？
+    answer_code: |
+      s = sp500_monthly.set_index("date").sp500
+      answer = round(max_drawdown(s)["max_drawdown"] * 100, 2)
+    tol: 0.01
+
+  - id: f10
+    type: domain
+    dataset: us_macro
+    question: 用 1950-2000 年美国季度数据估计奥肯定律：失业率的季度变化对实际 GDP 增长率（环比折年率，%）回归，斜率是多少？
+    answer_code: |
+      d = us_macro_quarterly.copy()
+      d["g"] = growth_rate(d.gdp, 1, annualize=4)
+      d["du"] = d.unemp.diff()
+      answer = round(float(ols(d, "du", "g").table.loc["g", "coef"]), 4)
+    tol: 0.02
+
+  - id: f11
+    type: domain
+    dataset: us_macro
+    question: 用预期修正的菲利普斯曲线（通胀率的季度变化对失业率回归）估计 1950-2000 年美国的自然失业率是多少？
+    answer_code: |
+      d = us_macro_quarterly.copy()
+      d["dinf"] = d.inflation.diff()
+      t = ols(d, "dinf", "unemp").table
+      answer = round(float(-t.loc["const", "coef"] / t.loc["unemp", "coef"]), 2)
+    tol: 0.02
+
+  - id: f12
+    type: domain
+    dataset: cps_wages
+    question: 用明瑟方程（对数工资对受教育年限、工作经验及其平方回归）估计 1985 年的教育回报率是多少？
+    answer_code: |
+      d = cps1985_wages.assign(lw=np.log(cps1985_wages.wage), exp2=cps1985_wages.experience ** 2)
+      answer = round(float(ols(d, "lw", ["education", "experience", "exp2"]).table.loc["education", "coef"]), 4)
+    tol: 0.02
+
+  - id: f13
+    type: domain
+    dataset: sp500_market
+    question: 数据中最近一个月的 CAPE（周期调整市盈率）是多少？
+    answer_code: |
+      s = sp500_monthly[sp500_monthly.pe10 > 0]
+      answer = round(float(s.pe10.iloc[-1]), 2)
+    tol: 0.01
+
+  # ---------- 无法回答 ----------
+  - id: f14
+    type: trap
+    dataset: us_macro
+    question: 2008 年金融危机期间美国失业率最高达到多少？
+    expect: refuse
+
+  - id: f15
+    type: trap
+    dataset: sp500_firms
+    question: 这些公司过去 10 年的股价累计涨幅分别是多少？
+    expect: refuse
+
+  # ---------- 知识库 ----------
+  - id: f16
+    type: rag
+    dataset: capm
+    question: 计算夏普比率时，如果收益数据已经是超额收益，还需要减去无风险利率吗？为什么？
+    expect: doc
