@@ -17,15 +17,21 @@ Usage:
     python scripts/fetch_datasets.py              # all packs
     python scripts/fetch_datasets.py --pack water
     python scripts/fetch_datasets.py --usgs-site 01646500   # also fetch a longer peak series directly from USGS
+    python scripts/fetch_datasets.py --mirror               # download GitHub files through the jsDelivr CDN first
+
+GitHub files are retried and, if raw.githubusercontent.com cannot be reached (common in mainland China),
+fetched from the jsDelivr mirror of the same commit. A proxy can be set with HTTPS_PROXY.
 """
 
 from __future__ import annotations
 
 import argparse
 import io
+import re
 import sqlite3
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import httpx
@@ -55,11 +61,43 @@ WB_AGGREGATES = set(
 CAMELS_ATTR_FILES = ["camels_name", "camels_topo", "camels_clim", "camels_hydro", "camels_soil", "camels_vege", "camels_geol"]
 
 
-def get(url: str) -> bytes:
-    print(f"  ↓ {url}")
-    r = httpx.get(url, timeout=60, follow_redirects=True)
-    r.raise_for_status()
-    return r.content
+USE_MIRROR_FIRST = False
+_RAW_URL = re.compile(r"^https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(.+)$")
+
+
+def jsdelivr(url: str) -> str | None:
+    """The jsDelivr CDN address of a raw GitHub file: cdn.jsdelivr.net/gh/<owner>/<repo>@<ref>/<path>."""
+    m = _RAW_URL.match(url)
+    return f"https://cdn.jsdelivr.net/gh/{m[1]}/{m[2]}@{m[3]}/{m[4]}" if m else None
+
+
+def _download(url: str, attempts: int) -> bytes:
+    for i in range(1, attempts + 1):
+        try:
+            r = httpx.get(url, timeout=60, follow_redirects=True)
+            r.raise_for_status()
+            return r.content
+        except httpx.HTTPError as e:
+            if i == attempts:
+                raise
+            print(f"    第 {i} 次失败（{type(e).__name__}），{2 * i} 秒后重试")
+            time.sleep(2 * i)
+    raise AssertionError("unreachable")
+
+
+def get(url: str, attempts: int = 3) -> bytes:
+    """Download with retries; GitHub files fall back to (or, with --mirror, start from) jsDelivr."""
+    mirror = jsdelivr(url)
+    order = [u for u in ([mirror, url] if USE_MIRROR_FIRST else [url, mirror]) if u]
+    for k, u in enumerate(order):
+        print(f"  ↓ {u}")
+        try:
+            return _download(u, attempts)
+        except httpx.HTTPError:
+            if k == len(order) - 1:
+                raise
+            print(f"    连接失败，改用 {'GitHub 原地址' if USE_MIRROR_FIRST else 'jsDelivr 镜像'}")
+    raise AssertionError("unreachable")
 
 
 def fetch_business(out: Path) -> None:
@@ -219,8 +257,23 @@ def main() -> None:
     ap.add_argument("--pack", choices=["business", "water", "finance", "all"], default="all")
     ap.add_argument("--out", default="data")
     ap.add_argument("--usgs-site", help="additionally fetch the annual peak series of this USGS site from USGS directly")
+    ap.add_argument("--mirror", action="store_true", help="download GitHub files through the jsDelivr CDN first")
     args = ap.parse_args()
+    global USE_MIRROR_FIRST
+    USE_MIRROR_FIRST = args.mirror
     out = Path(args.out)
+    try:
+        run(args, out)
+    except httpx.HTTPError as e:
+        sys.exit(
+            f"\n下载失败：{type(e).__name__}: {e}\n"
+            "可以：1) 稍后重试；2) 加 --mirror 优先使用 jsDelivr 镜像；"
+            "3) 设置代理后重试，如 PowerShell 中执行 $env:HTTPS_PROXY=\"http://127.0.0.1:7890\"（端口以你的代理软件为准）"
+        )
+    print("完成。")
+
+
+def run(args, out: Path) -> None:
     if args.pack in ("business", "all"):
         print("[business] Chinook")
         fetch_business(out)
@@ -230,7 +283,6 @@ def main() -> None:
     if args.pack in ("finance", "all"):
         print("[finance] 宏观、市场与微观数据")
         fetch_finance(out)
-    print("完成。")
 
 
 if __name__ == "__main__":
