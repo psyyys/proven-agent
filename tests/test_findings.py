@@ -1,3 +1,5 @@
+import pytest
+
 from proven.findings import FindingRegistry, check_report, extract_numbers, matches, unsupported_numbers
 
 
@@ -63,3 +65,23 @@ def test_decline_written_without_minus_sign():
     evidence = "yoy\n-5.64"
     assert unsupported_numbers("2025 年销售额同比下降 5.64%", evidence) == []
     assert unsupported_numbers("2025 年销售额同比增长 5.64%", evidence) == ["5.64%"]
+
+
+def test_wan_yi_is_trillion_and_matches_output_printed_in_the_same_unit():
+    # From a real run: the code printed "1.2113 万亿美元" and the claim repeated it, but was rejected
+    # because 万亿 was read as 万.
+    [n] = extract_numbers("中国名义 GDP 1.2113 万亿美元")
+    assert n.unit == "万亿" and n.value == pytest.approx(1.2113e12)
+    assert unsupported_numbers("2000 年中国名义 GDP 1.2113 万亿美元", "中国 2000 名义GDP = 1.2113 万亿美元") == []
+    assert unsupported_numbers("2000 年中国名义 GDP 1.2113 万亿美元", "gdp_usd 1.211332e+12") == []
+    assert unsupported_numbers("2000 年中国名义 GDP 1.3 万亿美元", "gdp_usd 1.211332e+12") == ["1.3 万亿"]
+    assert unsupported_numbers("收入约 1.2万 元", "12034.5") == [] and unsupported_numbers("收入约 1.2万 元", "1.2") == []
+
+
+def test_notebook_paths_become_relative(tmp_path):
+    from proven.notebook import portable
+
+    code = f"_name = load_table({str(tmp_path / 'data' / 'x.csv')!r})"
+    assert portable(code, base=tmp_path) == "_name = load_table('data/x.csv')"
+    outside = "load_table('/somewhere/else.csv')"
+    assert portable(outside, base=tmp_path) == outside

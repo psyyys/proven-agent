@@ -14,10 +14,10 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
-# A number, optionally with thousands separators, decimals, exponent, and a trailing % / 万 / 亿.
+# A number, optionally with thousands separators, decimals, exponent, and a trailing % / 万 / 亿 / 万亿.
 _NUM = re.compile(
     r"(?<![0-9A-Za-z_.])(?P<sign>[-−])?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?:[eE](?P<exp>[-+]?\d+))?"
-    r"\s*(?P<unit>%|％|万|亿|个百分点)?"
+    r"\s*(?P<unit>%|％|万亿|万|亿|个百分点)?"
 )
 _CITATION = re.compile(r"\[(?:F|C|D)\d+(?:\s*[,，]\s*(?:F|C|D)\d+)*\]")
 _DATE_PATTERNS = [
@@ -81,10 +81,7 @@ def extract_numbers(text: str, skip_trivial: bool = True) -> list[Number]:
         if m.group("sign"):
             value = -value
         unit = m.group("unit")
-        if unit == "万":
-            value *= 1e4
-        elif unit == "亿":
-            value *= 1e8
+        value *= _SCALE.get(unit, 1)
         decimals = len(raw.split(".")[1]) if "." in raw else 0
         # Small whole numbers ("前 5 名", "3 个步骤") carry little hallucination risk and are mostly ordinals.
         if skip_trivial and decimals == 0 and unit is None and abs(value) <= 10:
@@ -93,27 +90,27 @@ def extract_numbers(text: str, skip_trivial: bool = True) -> list[Number]:
     return out
 
 
-def _candidates(n: Number) -> list[float]:
-    """Values a written number could stand for: 23.4% may be printed as 23.4 or 0.234."""
-    vals = [n.value]
+_SCALE = {"万": 1e4, "亿": 1e8, "万亿": 1e12}
+
+
+def _candidates(n: Number) -> list[tuple[float, float]]:
+    """Values a written number could stand for, each with its rounding tolerance:
+    23.4% may be printed as 23.4 or 0.234; 1.21 万亿 as 1.21e12, or as 1.21 when the code already
+    printed in 万亿 (e.g. "1.2113 万亿美元")."""
+    tol = 0.5 * 10 ** (-n.decimals)
+    scale = _SCALE.get(n.unit)
+    if scale:
+        return [(n.value, tol * scale), (n.value / scale, tol)]
     if n.unit in ("%", "％", "个百分点"):
-        vals.append(n.value / 100)
-    return vals
+        return [(n.value, tol), (n.value / 100, tol / 100)]
+    return [(n.value, tol)]
 
 
 def matches(written: Number, actual: float) -> bool:
     """Does a number written in prose agree with a computed value, allowing for rounding?"""
     if math.isnan(actual):
         return False
-    for cand in _candidates(written):
-        tol = 0.5 * 10 ** (-written.decimals)
-        if cand != written.value:  # percent converted to a fraction: scale the rounding tolerance too
-            tol /= 100
-        # Large numbers written with 万/亿 are rounded at the unit's scale.
-        if written.unit == "万":
-            tol *= 1e4
-        elif written.unit == "亿":
-            tol *= 1e8
+    for cand, tol in _candidates(written):
         if abs(cand - actual) <= tol + 1e-9 * max(1.0, abs(actual)):
             return True
         if actual != 0 and abs(cand - actual) / abs(actual) <= 1e-6:
