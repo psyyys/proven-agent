@@ -1,0 +1,56 @@
+# 通用规则：统计表述与比例。所有领域包都会先加载这里的规则。
+# 格式说明见 docs/domain-rules-template.md
+
+review_points:
+  - 相关不等于因果：只做了相关分析时，结论不能写成"导致""使得""决定了"
+  - 结论的适用范围不能超出数据覆盖的时间、地区和对象
+  - 比较不同组或不同时期时，口径、筛选条件和时段长度要一致
+
+rules:
+  - id: G001
+    name: 相关系数在 -1 到 1 之间
+    type: range
+    severity: error
+    applies_when: [相关系数, 皮尔逊系数, Pearson 系数, Spearman 系数]
+    check: {min: -1, max: 1}
+    message: 相关系数只能在 -1 到 1 之间，检查是否把协方差、回归系数或 R² 当成了相关系数
+    basis: 相关系数的定义（Pearson / Spearman 均有界于 [-1, 1]）
+
+  - id: G002
+    name: 写"显著"必须有显著性检验支撑
+    type: consistency
+    severity: error
+    applies_when: [显著上升, 显著下降, 显著增加, 显著减少, 显著增长, 显著降低, 显著相关, 显著差异, 显著趋势, 统计显著, 显著的, significant]
+    unless_mention: [不显著, 无显著, 没有显著, 并不显著, 未达到显著, 不具有显著, 未通过显著性, not significant, insignificant, α=0.1, α = 0.1, 0.1 水平, 10% 水平, 0.01 水平, α=0.01]
+    check: {fact: p_value, max: 0.05, in: [claim, evidence], if_missing: error}
+    message: 写"显著"必须有检验结果且 p ≤ 0.05；不满足时请改写为"有上升/下降倾向，但不显著"。如采用其他显著性水平，请在结论中写明（如 α=0.1）
+    basis: 统计推断惯例，显著性水平默认取 0.05
+
+  - id: G003
+    name: 写"强相关"需要相关系数足够大
+    type: consistency
+    severity: warning
+    applies_when: [强相关, 高度相关, 强正相关, 强负相关, 强烈相关, strong correlation, strongly correlated]
+    unless_mention: [不存在强相关, 并非强相关, 没有强相关, 不是强相关]
+    check: {fact: correlation, abs_min: 0.7, in: [claim, evidence], if_missing: warning}
+    message: 写"强相关"时请给出相关系数，且绝对值一般应不小于 0.7；0.3–0.7 建议写"中等相关"
+    basis: 常用的相关强度划分（|r| ≥ 0.7 为强相关），不同学科阈值略有差异
+
+  - id: G004
+    name: 写"预测"要说明方法和不确定性
+    type: consistency
+    severity: warning
+    applies_when: [预测, 预估, 预计, forecast, predict]
+    check:
+      mention_any: [情景, 气候平均, 多年平均, 统计外推, 外推, 趋势外推, 置信区间, 预测区间, 不确定, 模型, 回归, ARIMA, 机器学习, 假设]
+    message: 基于历史数据的推算请说明方法（如多年平均、趋势外推、回归模型）和不确定性；只用历史均值时应称为"统计情景"而不是预测
+    basis: 统计推算与确定性预报的区别；历史统计结果不等于预报
+
+  - id: G005
+    name: 占比在 0 到 100% 之间
+    type: range
+    severity: error
+    applies_when: [占比, 所占比例, 占总, 份额, 百分比]
+    check: {min: 0, max: 100, percent: true}
+    message: 占比应在 0–100% 之间，检查分子分母是否用反、是否重复计数
+    basis: 占比的定义（部分 / 整体）

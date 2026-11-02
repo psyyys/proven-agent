@@ -1,4 +1,4 @@
-# 架构设计（v0.3）
+# 架构设计（v0.5）
 
 > 状态：第一版已实现。项目名：**Proven**。本文档描述当前实现；与原计划不同的地方在第 17 节列出。
 
@@ -16,7 +16,16 @@
 
 ①–④ 是业界常见做法，⑤ 是本项目的特色。工具调用的底层机制是 Function Calling（用 JSON Schema 描述工具）。
 
-计划中的多 Agent 版本只替换第 ② 层：Orchestrator-Workers（调度器按计划逐步派出上下文独立的分析员）+ Reflection（审核员检查方法与逻辑），流程由代码控制而不是模型自由对话。①③④⑤ 不变。
+多 Agent 模式只替换第 ② 层：Orchestrator-Workers（调度器按计划逐步派出上下文独立的分析员，第 1 期已实现）+ Reflection（审核员按领域规则和方法要点检查，第 2 期已实现）+ Reflexion（反思员从失败中总结经验，第 3 期已实现）。流程由代码控制而不是模型自由对话，①③④⑤ 不变。详见 [multi-agent.md](multi-agent.md)。
+
+审核员同样适用于单 Agent 模式（执行结束后审核一次），它把第 ⑤ 层从"数字有没有来源"扩展到"方法和表述站不站得住"：
+
+| 层次 | 检查什么 | 谁检查 | 代码 |
+|---|---|---|---|
+| 证据检查 | 结论里的数字是否出现在所引用代码的输出中 | 程序 | `findings.py` `unsupported_numbers()` |
+| 领域规则 | 取值范围、方法适用条件、文字与数字一致 | 程序（规则由领域专家编写） | `rules.py`、`packs/*/rules.yaml` |
+| 模型审核 | 规则写不出来的方法问题 | 模型（审核员角色） | `agent/review.py` |
+| 报告核查 | 报告里的每个数字是否对应已登记的结论 | 程序 | `findings.py` `check_report()` |
 
 代码阅读顺序见 [code-guide.md](code-guide.md)。
 
@@ -284,7 +293,7 @@ tests/              # 测试
 
 ## 15. 向多 Agent 演进
 
-第一版是单 Agent，但内部已经按角色拆分：计划、执行、校验、报告。第二版可以把这些角色拆成独立的 Agent（Planner / Analyst / Reviewer / Writer），由编排器调度。追溯日志和工具系统不用改。
+第 1 期（分析员子代理）已实现，`PROVEN_MODE=multi` 开启；第 2 期审核员已实现，`PROVEN_REVIEW` 控制（off / rules / full，默认 full）；第 3 期反思员已实现，`PROVEN_LESSONS` 控制（off / use / learn，默认 learn）。审核员和反思员在单 Agent 和多 Agent 模式下都生效。完整设计、取舍和评测方法见 [multi-agent.md](multi-agent.md)，领域规则格式见 [domain-rules-template.md](domain-rules-template.md)。
 
 ## 16. 待确认
 

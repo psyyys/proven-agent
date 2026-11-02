@@ -28,10 +28,54 @@ class NewSession(BaseModel):
 class NewRun(BaseModel):
     question: str
     auto_approve: bool = False
+    mode: str | None = None  # "single" | "multi"; defaults to PROVEN_MODE
+    review: str | None = None  # "off" | "rules" | "full"; defaults to PROVEN_REVIEW
+    lessons: str | None = None  # "off" | "use" | "learn"; defaults to PROVEN_LESSONS
+
+
+class NewLesson(BaseModel):
+    pack: str
+    text: str
+    when: str = ""
+    scope: str = "pack"
+
+
+class LessonPatch(BaseModel):
+    text: str | None = None
+    when: str | None = None
+    scope: str | None = None
+    pinned: bool | None = None
+    status: str | None = None
 
 
 class Approval(BaseModel):
     plan: dict[str, Any] | None = None
+
+
+class SettingsPatch(BaseModel):
+    mode: str | None = None
+    review: str | None = None
+    lessons: str | None = None
+    step_budget: int | None = None
+    max_steps: int | None = None
+    llm_temperature: float | None = None
+    tool_output_chars: int | None = None
+    cell_timeout: int | None = None
+
+
+class KnowledgeQuery(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+# Runtime-adjustable settings and their allowed ranges. Changes last until the server restarts.
+SETTING_LIMITS = {
+    "step_budget": (3, 30),
+    "max_steps": (5, 80),
+    "llm_temperature": (0.0, 1.5),
+    "tool_output_chars": (1000, 20000),
+    "cell_timeout": (10, 600),
+}
 
 
 def create_app(service: Service | None = None) -> FastAPI:
@@ -69,9 +113,185 @@ def create_app(service: Service | None = None) -> FastAPI:
         return {
             "model": st.llm_model,
             "llm_configured": bool(st.llm_api_key),
+            "mode": st.mode,
             "embedding": bool(s.embedder),
             "rerank": bool(s.reranker),
         }
+
+    def settings_view(s: Service) -> dict[str, Any]:
+        st = s.settings
+        from urllib.parse import urlparse
+
+        return {
+            "model": st.llm_model,
+            "base_url_host": urlparse(st.llm_base_url).hostname if st.llm_base_url else None,
+            "embed_model": st.embed_model if s.embedder else None,
+            "rerank_model": st.rerank_model if s.reranker else None,
+            "mode": st.mode,
+            "review": st.review,
+            "lessons": st.lessons,
+            "step_budget": st.step_budget,
+            "max_steps": st.max_steps,
+            "llm_temperature": st.llm_temperature,
+            "tool_output_chars": st.tool_output_chars,
+            "cell_timeout": st.cell_timeout,
+            "limits": SETTING_LIMITS,
+        }
+
+    @app.get("/api/settings")
+    async def get_settings(request: Request):
+        return settings_view(svc(request))
+
+    @app.patch("/api/settings")
+    async def patch_settings(request: Request, body: SettingsPatch):
+        s = svc(request)
+        changes = body.model_dump(exclude_none=True)
+        if "mode" in changes and changes["mode"] not in ("single", "multi"):
+            raise HTTPException(400, "mode 只能是 single 或 multi")
+        if "review" in changes and changes["review"] not in ("off", "rules", "full"):
+            raise HTTPException(400, "review 只能是 off、rules 或 full")
+        if "lessons" in changes and changes["lessons"] not in ("off", "use", "learn"):
+            raise HTTPException(400, "lessons 只能是 off、use 或 learn")
+        for key, value in changes.items():
+            if key in SETTING_LIMITS:
+                lo, hi = SETTING_LIMITS[key]
+                if not lo <= value <= hi:
+                    raise HTTPException(400, f"{key} 应在 {lo}–{hi} 之间")
+            setattr(s.settings, key, value)
+        if "llm_temperature" in changes and s._model is not None and hasattr(s._model, "temperature"):
+            s._model.temperature = changes["llm_temperature"]
+        return settings_view(s)
+
+    @app.get("/api/history")
+    async def history(request: Request, limit: int = 50):
+        from ..trace_export import list_runs
+
+        live = svc(request).runs
+        return [{**r, "live": r["run_id"] in live} for r in list_runs(svc(request).trace, limit=min(limit, 200))]
+
+    @app.get("/api/experiences")
+    async def experiences(request: Request, pack: str):
+        return [e.to_dict() for e in svc(request).experience.all(pack)]
+
+    @app.get("/api/lessons")
+    async def lessons(request: Request, pack: str, status: str | None = None):
+        return [x.to_dict() for x in svc(request).lessons.all(pack, status=status)]
+
+    @app.post("/api/lessons")
+    async def add_lesson(request: Request, body: NewLesson):
+        text = body.text.strip()
+        if not text:
+            raise HTTPException(400, "教训内容不能为空")
+        if body.scope not in ("pack", "all"):
+            raise HTTPException(400, "scope 只能是 pack 或 all")
+        return svc(request).lessons.add(body.pack, text, body.when.strip(), body.scope, origin="manual").to_dict()
+
+    @app.patch("/api/lessons/{lesson_id}")
+    async def patch_lesson(request: Request, lesson_id: int, body: LessonPatch):
+        if body.status not in (None, "active", "retired") or body.scope not in (None, "pack", "all"):
+            raise HTTPException(400, "status 只能是 active / retired，scope 只能是 pack / all")
+        x = svc(request).lessons.update(lesson_id, **body.model_dump(exclude_none=True))
+        if x is None:
+            raise HTTPException(404, "教训不存在")
+        return x.to_dict()
+
+    @app.delete("/api/lessons/{lesson_id}")
+    async def delete_lesson(request: Request, lesson_id: int):
+        if not svc(request).lessons.delete(lesson_id):
+            raise HTTPException(404, "教训不存在")
+        return {"ok": True}
+
+    @app.get("/api/evolve")
+    async def evolve_reports(request: Request):
+        out_dir = svc(request).settings.workspace / "evals" / "evolve"
+        items = []
+        for f in sorted(out_dir.glob("*.json"), reverse=True) if out_dir.exists() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            items.append({k: data.get(k) for k in ("pack", "model", "mode", "review", "time", "rounds")} | {"name": f.stem})
+        return items
+
+    @app.get("/api/evolve/{name}")
+    async def evolve_report(request: Request, name: str):
+        f = svc(request).settings.workspace / "evals" / "evolve" / f"{Path(name).name}.json"
+        if not f.exists():
+            raise HTTPException(404, "经验进化报告不存在")
+        return json.loads(f.read_text(encoding="utf-8"))
+
+    @app.delete("/api/experiences/{exp_id}")
+    async def delete_experience(request: Request, exp_id: int):
+        if not svc(request).experience.delete(exp_id):
+            raise HTTPException(404, "经验不存在")
+        return {"ok": True}
+
+    @app.get("/api/packs/{pack_id}/rules")
+    async def pack_rules(request: Request, pack_id: str):
+        from ..rules import RuleError
+
+        pack = svc(request).packs.get(pack_id)
+        if pack is None:
+            raise HTTPException(404, "领域包不存在")
+        try:
+            return {"ok": True, **pack.rules().to_dict()}
+        except RuleError as e:
+            return {"ok": False, "error": str(e), "rules": [], "review_points": []}
+
+    @app.get("/api/review-evals")
+    async def review_evals(request: Request):
+        out_dir = svc(request).settings.workspace / "evals" / "review"
+        items = []
+        for f in sorted(out_dir.glob("*.json"), reverse=True) if out_dir.exists() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            items.append({"name": f.stem, "pack": data.get("pack"), "mode": data.get("mode"), "model": data.get("model"),
+                          "time": data.get("time"), "summary": data.get("summary")})
+        return items
+
+    @app.get("/api/review-evals/{name}")
+    async def review_eval(request: Request, name: str):
+        f = svc(request).settings.workspace / "evals" / "review" / f"{Path(name).name}.json"
+        if not f.exists():
+            raise HTTPException(404, "审核测试报告不存在")
+        return json.loads(f.read_text(encoding="utf-8"))
+
+    @app.post("/api/packs/{pack_id}/review-eval")
+    async def run_rules_eval(request: Request, pack_id: str):
+        """Rules-only trap test: no model calls, takes well under a second."""
+        from ..review_eval import run_review_eval
+        from ..rules import RuleError
+
+        pack = svc(request).packs.get(pack_id)
+        if pack is None:
+            raise HTTPException(404, "领域包不存在")
+        try:
+            report = await run_review_eval(pack, out_dir=svc(request).settings.workspace / "evals" / "review")
+        except RuleError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"name": Path(report["files"][0]).stem, "summary": report["summary"]}
+
+    @app.get("/api/evals")
+    async def eval_reports(request: Request):
+        out_dir = svc(request).settings.workspace / "evals"
+        items = []
+        for f in sorted(out_dir.glob("*.json"), reverse=True) if out_dir.exists() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            items.append({"name": f.stem, "pack": data.get("pack"), "model": data.get("model"), "mode": data.get("mode", "single"),
+                          "review": data.get("review", "off"), "time": data.get("time"), "summary": data.get("summary")})
+        return items
+
+    @app.get("/api/evals/{name}")
+    async def eval_report(request: Request, name: str):
+        f = svc(request).settings.workspace / "evals" / f"{Path(name).name}.json"
+        if not f.exists():
+            raise HTTPException(404, "评测报告不存在")
+        return json.loads(f.read_text(encoding="utf-8"))
 
     @app.get("/api/packs")
     async def packs(request: Request):
@@ -121,6 +341,20 @@ def create_app(service: Service | None = None) -> FastAPI:
             raise HTTPException(404, "表不存在")
         return session.profiles[name]
 
+    @app.get("/api/sessions/{sid}/tables/{name}/rows")
+    async def table_rows(request: Request, sid: str, name: str, offset: int = 0, limit: int = 100):
+        session = get_session(request, sid)
+        try:
+            return await session.table_rows(name, max(offset, 0), min(max(limit, 1), 500))
+        except KeyError as e:
+            raise HTTPException(404, "表不存在") from e
+
+    @app.post("/api/sessions/{sid}/knowledge/search")
+    async def knowledge_search(request: Request, sid: str, body: KnowledgeQuery):
+        session = get_session(request, sid)
+        hits = await session.kb.search(body.query, top_k=min(max(body.top_k, 1), 20))
+        return {"vector": session.kb.vector_enabled, "rerank": bool(session.kb.reranker), "hits": [h.to_dict() for h in hits]}
+
     @app.get("/api/sessions/{sid}/chunks/{chunk_id}")
     async def chunk(request: Request, sid: str, chunk_id: str):
         c = get_session(request, sid).kb.get(chunk_id)
@@ -147,7 +381,9 @@ def create_app(service: Service | None = None) -> FastAPI:
         except RuntimeError as e:
             raise HTTPException(400, str(e)) from e
         try:
-            run = svc(request).start_run(session, body.question.strip(), body.auto_approve)
+            run = svc(request).start_run(session, body.question.strip(), body.auto_approve, body.mode, body.review, body.lessons)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         except RuntimeError as e:
             raise HTTPException(409, str(e)) from e
         return run.summary()
@@ -197,8 +433,10 @@ def create_app(service: Service | None = None) -> FastAPI:
 
     @app.get("/api/runs/{rid}/events")
     async def events(request: Request, rid: str, after: int = 0):
-        get_run(request, rid)
         store = svc(request).trace
+        live = rid in svc(request).runs
+        if not live and not store.events(rid):
+            raise HTTPException(404, "分析不存在")
 
         async def stream():
             q = store.subscribe(rid)
@@ -209,6 +447,8 @@ def create_app(service: Service | None = None) -> FastAPI:
                     yield _sse(e)
                     if e.type == T.RUN_FINISHED:
                         return
+                if not live:  # a run from an earlier server process: replay only
+                    return
                 while True:
                     if await request.is_disconnected():
                         return

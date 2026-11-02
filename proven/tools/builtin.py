@@ -15,7 +15,23 @@ async def run_python(ctx, args) -> ToolResult:
     if not code.strip():
         return ToolResult("code 不能为空", ok=False)
     cell = await ctx.execute(code, purpose=args.get("purpose", ""))
-    return ToolResult(cell.for_model(ctx.settings.tool_output_chars), ok=cell.ok, data={"cell_id": cell.cell_id})
+    return _cell_result(ctx, cell)
+
+
+def _cell_result(ctx, cell) -> ToolResult:
+    """Tool result for a cell. Output too long for the context is spilled to a file the model can read."""
+    limit = ctx.settings.tool_output_chars
+    text = cell.for_model(limit)
+    data = {"cell_id": cell.cell_id}
+    full = cell.plain_text()
+    if len(full) > limit:
+        rel = f"outputs/{cell.cell_id}.txt"
+        path = ctx.session.dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(full, encoding="utf-8")
+        text += f"\n[完整输出（{len(full)} 字符）已保存到 {rel}，需要时用 run_python 读取需要的部分，不要整个打印]"
+        data["spilled"] = rel
+    return ToolResult(text, ok=cell.ok, data=data)
 
 
 async def query_sql(ctx, args) -> ToolResult:
@@ -27,7 +43,7 @@ async def query_sql(ctx, args) -> ToolResult:
         return ToolResult(f"result_var 不是合法的变量名：{var}", ok=False)
     code = f'{var} = sql("""\n{query}\n""")\n{var}'
     cell = await ctx.execute(code, purpose=args.get("purpose", ""))
-    return ToolResult(cell.for_model(ctx.settings.tool_output_chars), ok=cell.ok, data={"cell_id": cell.cell_id})
+    return _cell_result(ctx, cell)
 
 
 async def inspect_data(ctx, args) -> ToolResult:
@@ -117,14 +133,26 @@ async def record_finding(ctx, args) -> ToolResult:
             data={"rejected": True, "missing": missing},
         )
 
+    replaces = [x for x in re.split(r"[\s,，、;；]+", (args.get("replaces") or "").strip().upper()) if x]
+    for fid in replaces:
+        old = ctx.run.findings.get(fid)
+        if old is None or old.status != "active":
+            return ToolResult(f"replaces 中的 {fid} 不存在或已被替换。可替换的结论：{', '.join(x.id for x in ctx.run.findings.active()) or '无'}", ok=False)
+
     value = args.get("value")
     try:
         value = float(value) if value is not None else None
     except (TypeError, ValueError):
         value = None
     f = ctx.run.findings.add(claim, etype, evidence, value)
-    ctx.emit(T.FINDING, **f.to_dict())
-    return ToolResult(f"已登记 {f.id}：{claim}（证据 {evidence}）", data={"finding_id": f.id})
+    if ctx.step_findings is not None:
+        ctx.step_findings.append(f.id)
+    ctx.emit(T.FINDING, **f.to_dict(), replaces=replaces)
+    for fid in replaces:
+        ctx.run.findings.retract(fid, by=f.id)
+        ctx.emit(T.FINDING_RETRACTED, id=fid, replaced_by=f.id)
+    note = f"，替换了 {', '.join(replaces)}" if replaces else ""
+    return ToolResult(f"已登记 {f.id}：{claim}（证据 {evidence}{note}）", data={"finding_id": f.id})
 
 
 def _where_else(ctx, missing: list[str], exclude: set[str]) -> str:
@@ -152,6 +180,46 @@ async def ask_user(ctx, args) -> ToolResult:
     ctx.run.pending_question = q + (f"（可选：{' / '.join(options)}）" if options else "")
     ctx.emit(T.ASK_USER, question=q, options=options)
     return ToolResult("已向用户提问，等待回答。", stop=True, data={"question": q})
+
+
+async def submit_step(ctx, args) -> ToolResult:
+    status = args.get("status") or "done"
+    if status not in ("done", "partial", "blocked"):
+        status = "done"
+    summary = (args.get("summary") or "").strip()
+    if not summary:
+        return ToolResult("summary 不能为空：用两三句话说明这一步得到了什么", ok=False)
+    if status == "done" and not ctx.step_findings and not args.get("no_findings_reason"):
+        return ToolResult(
+            "这一步还没有登记任何结论。请先用 record_finding 登记关键数字；"
+            "如果这一步确实不产生结论（如只做数据准备），请在 no_findings_reason 中说明。",
+            ok=False,
+        )
+    payload = {
+        "status": status,
+        "summary": summary[:600],
+        "variables": [str(v) for v in (args.get("variables") or [])][:20],
+        "notes": (args.get("notes") or "")[:400],
+    }
+    return ToolResult("已提交本步结果。", finish=True, data={"submitted": payload})
+
+
+SUBMIT_STEP = Tool(
+    "submit_step",
+    "完成本步骤时调用，提交结构化结果并结束本步。后续步骤只能看到这里的总结和你登记的结论，看不到你的代码和对话，"
+    "所以总结要写清楚得到了什么、关键变量叫什么。",
+    params(
+        {
+            "status": {"type": "string", "enum": ["done", "partial", "blocked"], "description": "done 完成；partial 部分完成；blocked 无法完成"},
+            "summary": {"type": "string", "description": "两三句话总结本步得到了什么（不超过 300 字），关键数字要和已登记结论一致"},
+            "variables": {"type": "array", "items": {"type": "string"}, "description": "后续步骤会用到的内核变量名，如 ann、amax"},
+            "notes": {"type": "string", "description": "给后续步骤的提醒，如数据问题、口径选择（可选）"},
+            "no_findings_reason": {"type": "string", "description": "本步不登记结论时说明原因（可选）"},
+        },
+        ["status", "summary"],
+    ),
+    submit_step,
+)
 
 
 def builtin_tools() -> ToolRegistry:
@@ -222,6 +290,7 @@ def builtin_tools() -> ToolRegistry:
                         "claim": {"type": "string", "description": "结论陈述，包含具体数字，如：2013 年总销售额为 2,328.60 美元"},
                         "evidence": {"type": "string", "description": "证据编号：代码单元（如 C3）或文档片段（如 D12）；多个用逗号分隔，如 C6,C8"},
                         "value": {"type": "number", "description": "该结论的核心数值（可选）"},
+                        "replaces": {"type": "string", "description": "按审核意见更正时，填写被替换的旧结论编号，如 F3（可选）"},
                     },
                     ["claim", "evidence"],
                 ),

@@ -47,8 +47,8 @@ def export_notebook(session: Session) -> str:
             c = v4.new_code_cell(f"# [{cid}]\n{cell.code}")
             c.outputs = _outputs(cell)
             nb.cells.append(c)
-        if run.findings.items:
-            nb.cells.append(v4.new_markdown_cell("### 已登记结论\n\n" + "\n".join(f"- **{f.id}** {f.claim}（证据 {f.evidence_id}）" for f in run.findings.items)))
+        if run.findings.active():
+            nb.cells.append(v4.new_markdown_cell("### 已登记结论\n\n" + "\n".join(f"- **{f.id}** {f.claim}（证据 {f.evidence_id}）" for f in run.findings.active())))
         if run.report:
             nb.cells.append(v4.new_markdown_cell("### 报告\n\n" + run.report))
     return nbformat.writes(nb)

@@ -1,0 +1,158 @@
+# 审核员陷阱测试（水利）
+#
+# 每条用例是一条"结论 + 证据"。expect 列出应该拦下它的规则编号；expect 为空表示这是正确的结论，不应被拦。
+# expect: [llm] 表示规则覆盖不到、只能靠模型审核发现的方法问题（只在 proven review-eval --llm 时评估）。
+# evidence 是证据代码单元的输出，code 是代码，context 是同一次分析里的其他结论，都可以省略。
+#
+# 运行：proven review-eval --pack water          （只测规则，不调用模型）
+#       proven review-eval --pack water --llm    （规则 + 模型审核）
+
+cases:
+  # ---------- 取值范围 ----------
+  - id: w-r01
+    claim: 01013500 流域 2001 年的径流系数为 1.84
+    code: "q_mm = df.QObs_cfs.sum() * 0.0283 * 86400 / area\nprint(round(q_mm / df.prcp.sum(), 2))"
+    evidence: "1.84"
+    expect: [W001]
+    note: 流量单位换算漏了面积的 km² → m²，径流系数大于 1
+
+  - id: w-r02
+    claim: 4 个流域 2001 年的径流系数分别为 0.31、0.42、0.55 和 1.35
+    expect: [W001]
+    note: 列表中有一个值越界
+
+  - id: w-r03
+    claim: 671 个流域的平均基流指数为 1.6
+    expect: [W002]
+    note: 把基流量与地表径流之比当成了基流指数
+
+  - id: w-r04
+    claim: 干旱指数与径流系数的相关系数为 -1.25
+    expect: [G001]
+    note: 把回归斜率当成了相关系数
+
+  - id: w-r05
+    claim: 01594440 站年最大洪峰序列的 Cs/Cv 为 6.8（矩法，适线前的初值）
+    expect: [W003, W103]
+    note: 短序列矩法估计的 Cs 偏差大；也没有说明选样方式
+
+  # ---------- 适用条件 ----------
+  - id: w-c01
+    claim: 按 P-III 分布（适线法）计算，01594440 站 100 年一遇设计洪峰为 812 m³/s
+    code: "fit = p3_fit(am.peak)\nprint(fit)"
+    evidence: "P3Fit(n=19, mean=246.55, Cv=0.712, Cs=2.120, Cs/Cv=2.98, method=moments)"
+    expect: [W101, W102]
+    note: 19 年资料外推百年一遇，且没有说明不确定性
+
+  - id: w-c02
+    claim: 1000 年一遇设计洪峰为 1530 m³/s（P-III，适线法，样本 19 年）
+    expect: [W101, W102]
+    note: 外推倍数超过 50 倍
+
+  - id: w-c03
+    claim: 01594440 站 2000–2018 年的年最大洪峰均值为 246.6 m³/s
+    code: "am = annual_maxima(peaks, 'peak_date', 'peak_cfs')\nprint(round(am.peak.mean() * 0.0283, 1))"
+    evidence: "246.6"
+    expect: [W103]
+    note: 没有说明按日历年还是水文年选样
+
+  - id: w-c04
+    claim: 01594440 站 10 年一遇设计洪峰为 520 m³/s（样本 45 年）
+    expect: [W104]
+    note: 没有说明 P-III 参数估计方法
+
+  # ---------- 文字与数字一致 ----------
+  - id: w-s01
+    claim: 01594440 站年最大洪峰呈显著上升趋势
+    code: "print(mk_test(am.peak))"
+    evidence: "trend=increasing, p=0.27, tau=0.18"
+    expect: [G002]
+    note: 检验结果不显著却写成"显著"
+
+  - id: w-s02
+    claim: 年降水量在 2000–2002 年间显著增加
+    expect: [G002]
+    note: 没有做任何显著性检验
+
+  - id: w-s03
+    claim: 干旱指数与径流系数强相关（r = -0.42）
+    expect: [G003]
+    note: 相关系数绝对值 0.42 只是中等相关
+
+  - id: w-s04
+    claim: 预测 2026 年流域年降水量为 1483 mm
+    code: "print(round(ann.prcp.mean(), 0))"
+    evidence: "1483.0"
+    expect: [G004]
+    note: 用多年平均冒充预测（来自攀枝花案例）
+
+  # ---------- 只有模型审核能发现的问题 ----------
+  - id: w-l01
+    claim: 干旱指数越高导致径流系数越低，干旱指数每增加 1，径流系数减少 0.21
+    code: "print(round(np.polyfit(attrs.aridity, attrs.runoff_ratio, 1)[0], 2))"
+    evidence: "-0.21"
+    expect: [llm]
+    note: 横截面回归只能说明相关，不能写成因果
+
+  - id: w-l02
+    claim: 01013500 流域 2001 年径流深为 4521 mm
+    code: "print(round(df.QObs_cfs.sum(), 0))"
+    evidence: "4521.0"
+    expect: [llm]
+    note: 直接把流量（cfs）求和当成径流深，没有做单位换算和面积折算
+
+  - id: w-l03
+    claim: 671 个流域中，森林覆盖率最高的流域径流系数也最高，说明植树可以增加径流
+    code: "print(attrs.sort_values('frac_forest').tail(1)[['frac_forest','runoff_ratio']])"
+    evidence: "     frac_forest  runoff_ratio\n512         1.0          0.71"
+    expect: [llm]
+    note: 用单个流域以偏概全，并推出因果结论
+
+  # ---------- 正确的结论（不应被拦） ----------
+  - id: w-ok01
+    claim: 4 个流域 2001 年的径流系数分别为 0.31、0.42、0.55 和 0.62
+    expect: []
+
+  - id: w-ok02
+    claim: 径流系数大于 1 的流域有 12 个，主要分布在融雪补给区
+    expect: []
+    note: 1 是筛选阈值，不是径流系数的值
+
+  - id: w-ok03
+    claim: 干旱指数与径流系数的相关系数为 -0.75，属于强负相关
+    expect: []
+
+  - id: w-ok04
+    claim: 01594440 站年最大洪峰呈上升倾向，但不显著（Mann-Kendall p = 0.27）
+    expect: []
+
+  - id: w-ok05
+    claim: 年最大洪峰在 0.05 水平下显著上升（p = 0.012）
+    expect: []
+
+  - id: w-c05
+    claim: 按 P-III 分布（适线法）估计，100 年一遇设计洪峰为 812 m³/s；样本仅 19 年，外推较远，结果仅供参考
+    expect: [W101]
+    note: 已说明不确定性，W102 不再拦截；样本不足 30 年的提示仍然保留（警告级）
+
+  - id: w-ok11
+    claim: 年最大洪峰序列的均值为 246.6 m³/s
+    context: 按水文年（10 月起算）选取 2000–2018 年的年最大洪峰，共 19 年
+    expect: []
+    note: 选样方式在同一次分析的另一条结论中已说明
+
+  - id: w-ok07
+    claim: 按水文年（10 月起算）选样，01594440 站年最大洪峰均值为 246.6 m³/s
+    expect: []
+
+  - id: w-ok08
+    claim: 以 1991–2020 年多年平均作为统计情景，2026 年降水量约为 1483 mm，不是确定性预报
+    expect: []
+
+  - id: w-ok09
+    claim: 基流指数最高的 10 个流域平均基流指数为 0.81，平均坡度为 12.3 m/km
+    expect: []
+
+  - id: w-ok10
+    claim: 按 P-III 分布（适线法）估计，20 年一遇设计洪峰为 640 m³/s（1950–2018 年，共 69 年资料）
+    expect: []

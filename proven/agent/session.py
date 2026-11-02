@@ -30,12 +30,14 @@ class Session:
         kb: KnowledgeBase,
         executor: Executor | None = None,
         session_id: str | None = None,
+        lessons=None,
     ):
         self.id = session_id or uuid.uuid4().hex[:10]
         self.pack = pack
         self.settings = settings
         self.trace = trace
         self.experience = experience
+        self.lessons = lessons  # LessonStore, or None to run without lessons
         self.kb = kb
         self.dir = settings.workspace / "sessions" / self.id
         self.files_dir = self.dir / "files"
@@ -49,6 +51,7 @@ class Session:
         self.setup_code: list[str] = []
         self.history: list[dict[str, str]] = []
         self.runs: dict[str, Any] = {}
+        self._baseline_vars: list[str] = []
 
     async def start(self) -> None:
         self.files_dir.mkdir(parents=True, exist_ok=True)
@@ -57,6 +60,8 @@ class Session:
         if self.pack.kit:
             imports.append(f"from {self.pack.kit} import *")
         await self._setup("\n".join(imports))
+        base = await self.executor.run("import json as _j\nprint(_j.dumps(list(get_ipython().user_ns)))", record=False)
+        self._baseline_vars = json.loads(base.stdout.strip().splitlines()[-1]) if base.ok and base.stdout.strip() else []
         files = self.pack.knowledge_files()
         if files:
             await self.kb.add_files(files)
@@ -111,6 +116,33 @@ class Session:
             prof = await self.load_table(dest)
             return {"kind": "table", "name": prof["name"], "rows": prof["rows"]}
         raise ValueError(f"不支持的文件类型：{suffix}")
+
+    async def kernel_variables(self) -> list[dict[str, str]]:
+        """Variables created by analysis code (not loaded tables, modules or helpers)."""
+        code = (
+            "from proven.kit.core import _user_variables as _uv\nimport json as _j\n"
+            f"print(_j.dumps(_uv(set({self._baseline_vars!r})), ensure_ascii=False))"
+        )
+        r = await self.executor.run(code, record=False)
+        if not r.ok or not r.stdout.strip():
+            return []
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    async def table_rows(self, name: str, offset: int = 0, limit: int = 100) -> dict[str, Any]:
+        """A page of a loaded table, read from the kernel (the table as the agent sees it)."""
+        if name not in self.profiles:
+            raise KeyError(name)
+        code = (
+            "import json as _j\n"
+            f"_t = tables[{name!r}]\n"
+            f"_p = _t.iloc[{int(offset)}:{int(offset) + int(limit)}]\n"
+            "print(_j.dumps({'columns': [str(c) for c in _p.columns], 'total': int(len(_t)), "
+            "'rows': _j.loads(_p.to_json(orient='records', date_format='iso', force_ascii=False))}, ensure_ascii=False))"
+        )
+        r = await self.executor.run(code, record=False)
+        if not r.ok:
+            raise RuntimeError(f"{r.error['name']}: {r.error['value']}")
+        return json.loads(r.stdout.strip().splitlines()[-1])
 
     def describe(self) -> dict[str, Any]:
         return {

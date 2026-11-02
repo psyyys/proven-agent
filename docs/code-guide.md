@@ -1,6 +1,8 @@
 # 代码阅读指南
 
-核心代码约 1600 行 Python。不用从头到尾读，按下面的顺序读，每一站都能独立看懂。
+> 需要作者核实的专业内容、要亲自跑的实验，汇总在 [author-notes.md](author-notes.md)。
+
+核心代码约 2600 行 Python。不用从头到尾读，按下面的顺序读，每一站都能独立看懂。
 
 ## 先看全貌：一次提问经过哪些代码
 
@@ -16,7 +18,9 @@
             │              ├─ run_python()  → sandbox/jupyter.py 运行代码   ← CodeAct
             │              ├─ search_knowledge() → rag/index.py 检索         ← RAG
             │              └─ record_finding() → findings.py 核对证据        ← 证据约束
-            └─ _report()    写报告 → findings.py check_report() 核查数字      ← 程序化核验
+            ├─ _review()    审核结论 → rules.py 领域规则 + 模型审核，错误退回一次  ← Reflection
+            ├─ _report()    写报告 → findings.py check_report() 核查数字      ← 程序化核验
+            └─ reflect()    失败 → 教训 → lessons.py 经验库，下次运行放进提示词  ← Reflexion
 ```
 
 ## 范式与代码的对应
@@ -30,6 +34,8 @@
 | Agentic RAG | 模型需要时自己调用检索 | `tools/builtin.py` → `search_knowledge()`；`rag/index.py` → `search()` |
 | 证据约束 | 结论必须绑定证据，数字必须出现在证据里 | `tools/builtin.py` → `record_finding()`；`findings.py` → `unsupported_numbers()` |
 | 程序化核验 | 程序检查报告里每个数字的来源 | `findings.py` → `check_report()`；`orchestrator.py` → `_report()` |
+| Reflection | 另一个角色检查结论，有错退回重做 | `orchestrator.py` → `_review()`；`rules.py` → `evaluate()`；`agent/review.py` |
+| Reflexion | 把失败写成文字教训，下次放进提示词；不改模型权重 | `orchestrator.py` → `reflect()`、`_pick_lessons()`；`agent/reflector.py`；`lessons.py` |
 
 ## 阅读顺序
 
@@ -63,6 +69,45 @@ pytest tests/test_agent_e2e.py -v
 | 7 | `proven/agent/orchestrator.py` | `_report()` | 核查不通过时，程序怎么让模型重写？ |
 | 8 | `tests/test_findings.py` | 全文 | 每个测试对应一个边界情况 |
 
+### 第 2.5 站：多 Agent 模式（约 30 分钟）
+
+| 顺序 | 文件 | 重点看 | 想清楚的问题 |
+|---|---|---|---|
+| 1 | `proven/agent/orchestrator.py` | `_react()`：单 Agent 和每个分析员共用的 ReAct 循环 | 循环在哪几种情况下结束？ |
+| 2 | `proven/agent/orchestrator.py` | `_execute_multi()`、`_step_result()` | 分析员之间传递了什么，没传递什么？超出轮数时怎么处理？ |
+| 3 | `proven/agent/prompts.py` | `ANALYST_ROLE`、`handoff()` | 交接单里有哪几部分？ |
+| 4 | `proven/tools/builtin.py` | `submit_step()`、`_cell_result()` | 为什么没登记结论就不能标记"完成"？大输出存到哪里？ |
+| 5 | `tests/test_multi_agent.py` | 第一个测试 | 测试怎么证明第二个分析员看不到第一个分析员的代码？ |
+
+设计理由见 [multi-agent.md](multi-agent.md)。
+
+### 第 2.6 站：审核员（约 40 分钟，规则部分是你的专业内容）
+
+| 顺序 | 文件 | 重点看 | 想清楚的问题 |
+|---|---|---|---|
+| 1 | `proven/packs/water/rules.yaml` | 全文 | 每条规则拦的是什么错误？依据对不对？阈值你认同吗？ |
+| 2 | `proven/rules.py` | `evaluate()`、`_values_after()`、`find_fact()` | 四种 check 分别怎么判断？"径流系数与干旱指数的相关系数为 -0.75"为什么不会误拦？ |
+| 3 | `proven/agent/orchestrator.py` | `_review()`，以及 `_execute_multi()` 里调用它的部分 | 什么情况下退回？退回给谁？为什么只退回一次？ |
+| 4 | `proven/agent/review.py`、`prompts.py` 的 `REVIEW` | 模型审核员看到了什么 | 为什么把规则已发现的问题也给它看？ |
+| 5 | `proven/tools/builtin.py` | `record_finding()` 的 `replaces` 参数 | 被替换的结论去哪了？报告还能引用它吗？ |
+| 6 | `proven/packs/water/evals/review_cases.yaml`、`proven/review_eval.py` | 陷阱测试 | 拦截率和误拦率分别怎么算？为什么 100% 还不能说明效果？ |
+| 7 | `tests/test_review.py` | 第一个测试 | 一次"退回 → 更正 → 复审"在事件里是什么样子？ |
+
+格式说明见 [domain-rules-template.md](domain-rules-template.md)。
+
+### 第 2.7 站：反思员与经验进化（约 40 分钟）
+
+| 顺序 | 文件 | 重点看 | 想清楚的问题 |
+|---|---|---|---|
+| 1 | `proven/agent/reflector.py` | `collect_failures()` | 哪些事件算失败？"签名"是什么，有什么用？为什么要把后来改对的代码一起给反思员？ |
+| 2 | `proven/agent/prompts.py` | `REFLECT`、`format_lessons()` | 对教训有哪些要求？为什么不能写具体数值？ |
+| 3 | `proven/agent/orchestrator.py` | `_pick_lessons()`、`reflect()` | 教训在运行的什么时候放进去、什么时候总结出来？`use` 和 `learn` 模式有什么区别？ |
+| 4 | `proven/lessons.py` | `select()`、`credit()`、`reinforce()` | 怎么判断一条教训"有效"？为什么这个判断是弱证据？停用的教训为什么不能被反思员"复活"？ |
+| 5 | `proven/evolve.py` | 文件开头的说明、`split_questions()` | 为什么训练集和测试集要分开？为什么实验要在独立的工作区里跑？ |
+| 6 | `tests/test_lessons.py` | 第一个和最后一个评测相关的测试 | 一条教训从产生、被使用、被记账到被停用，经过了哪些事件？ |
+
+设计理由见 [multi-agent.md](multi-agent.md) 第 3 期。
+
 ### 第 3 站：能力层（按兴趣挑着看）
 
 | 文件 | 内容 | 重点 |
@@ -79,6 +124,8 @@ pytest tests/test_agent_e2e.py -v
 
 `service.py`（会话管理）、`api/app.py`（网页接口）、`cli.py`（命令行）、`evals.py`（评测）、`frontend/`（界面）。
 
+前端的关键是 `frontend/src/lib/derive.ts`：后端推送的是一条条事件（`run.started`、`tool.call`、`cell.executed`……），`deriveRun()` 把事件序列转换成界面需要的状态（时间线条目、结论、报告、用量）。界面本身不保存分析状态，所以历史运行可以通过重放事件完整还原。
+
 ## 动手练习
 
 读代码最快的办法是改一点东西，看测试有什么变化。
@@ -87,6 +134,7 @@ pytest tests/test_agent_e2e.py -v
 2. **加一个工具**：在 `tools/builtin.py` 里仿照 `inspect_data` 写一个 `list_tables`，只返回所有表名，再注册到 `builtin_tools()` 里
 3. **写一个测试**：仿照 `tests/test_agent_e2e.py`，用 `ScriptedChat` 模拟模型在报告里写一个没登记过的数字，断言核查不通过
 4. **加一个水文函数**：在 `kit/water.py` 里加一个计算径流系数的函数，在 `packs/water/prompt.md` 里告诉模型它的用法
+5. **加一条领域规则**：在 `packs/water/rules.yaml` 里加一条你最有把握的规则（比如"多年平均蒸发量不能超过……"），在 `evals/review_cases.yaml` 里加一条该拦的、一条不该拦的用例，运行 `proven review-eval --pack water` 看结果
 
 ## 调试技巧
 

@@ -57,3 +57,9 @@ def test_numbers_next_to_chinese_and_not_dates():
 def test_claim_ordinals_do_not_need_evidence():
     evidence = "  Country  revenue\n0     USA   523.06\n1  Canada   303.96"
     assert unsupported_numbers("收入前 5 名中美国最高，为 523.06", evidence) == []
+
+
+def test_decline_written_without_minus_sign():
+    evidence = "yoy\n-5.64"
+    assert unsupported_numbers("2025 年销售额同比下降 5.64%", evidence) == []
+    assert unsupported_numbers("2025 年销售额同比增长 5.64%", evidence) == ["5.64%"]

@@ -10,6 +10,7 @@ from typing import Any
 from .. import trace as T
 from ..config import Settings
 from ..findings import FindingRegistry
+from ..rules import Issue, RuleSet
 from ..sandbox import CellResult
 from .session import Session
 
@@ -18,6 +19,11 @@ from .session import Session
 class Run:
     question: str
     auto_approve: bool = True
+    mode: str | None = None  # overrides Settings.mode for this run
+    review_mode: str | None = None  # overrides Settings.review: off | rules | full
+    lessons_mode: str | None = None  # overrides Settings.lessons: off | use | learn
+    defer_reflection: bool = False  # the caller reflects later, e.g. the eval harness after scoring
+    lesson_ids: list[int] = field(default_factory=list)  # lessons put into this run's prompt
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
     status: str = "pending"  # pending | planning | awaiting_approval | running | reporting | done | needs_input | cancelled | error
     plan: dict[str, Any] | None = None
@@ -26,6 +32,7 @@ class Run:
     report: str = ""
     pending_question: str = ""  # set when the agent paused to ask the user something
     check: dict[str, Any] | None = None
+    issues: list[Issue] = field(default_factory=list)  # final review issues (warnings and unresolved errors)
     usage: dict[str, int] = field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0, "llm_calls": 0})
     _approval: asyncio.Future | None = None
     cancelled: bool = False
@@ -41,6 +48,11 @@ class Run:
             "report": self.report,
             "check": self.check,
             "usage": self.usage,
+            "mode": self.mode,
+            "review_mode": self.review_mode,
+            "lessons_mode": self.lessons_mode,
+            "lesson_ids": self.lesson_ids,
+            "issues": [i.to_dict() for i in self.issues],
         }
 
 
@@ -49,12 +61,18 @@ class RunContext:
         self.session = session
         self.run = run
         self.settings = settings
+        # In multi mode, the plan step (1-based) the current analyst works on; tags every event.
+        self.task: int | None = None
+        self.step_findings: list[str] | None = None  # finding ids recorded by the current analyst
+        self.rules: RuleSet = RuleSet([])
 
     def emit(self, type: str, **data: Any) -> T.Event:
+        if self.task is not None:
+            data.setdefault("task", self.task)
         return self.session.trace.emit(self.run.id, self.session.id, type, **data)
 
     async def execute(self, code: str, purpose: str = "") -> CellResult:
-        cell = await self.session.executor.run(code)
+        cell = await self.session.executor.run(code, timeout=self.settings.cell_timeout)
         self.session.cells[cell.cell_id] = cell
         self.run.cell_ids.append(cell.cell_id)
         self.emit(T.CELL_EXECUTED, purpose=purpose, **cell.to_dict())

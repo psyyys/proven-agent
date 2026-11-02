@@ -42,9 +42,9 @@ PLAN = """请根据用户问题和数据情况，制定分析计划。只输出 
   "answerable": true,
   "reason": "如果 answerable 为 false，说明为什么现有数据无法回答",
   "assumptions": ["你做出的假设，可以为空"],
-  "steps": [{"title": "步骤标题（10 字以内）", "detail": "具体做什么"}]
+  "steps": [{"title": "步骤标题（10 字以内）", "detail": "具体做什么", "deliverable": "这一步要登记哪些结论（可选）"}]
 }
-要求：steps 2-6 步；不要包含"写报告"这类步骤；如果数据明显缺少回答问题所需的信息，answerable 设为 false，steps 留空。"""
+要求：steps 2-6 步，每一步应能独立完成并产出可登记的结论；不要包含"写报告"这类步骤；如果数据明显缺少回答问题所需的信息，answerable 设为 false，steps 留空。"""
 
 NUDGE_NO_FINDINGS = (
     "你还没有用 record_finding 登记任何结论。请把回答问题所需的关键数字登记下来"
@@ -65,12 +65,16 @@ REPORT = """请根据以下已登记的结论，为用户写一份分析报告�
 ## 分析过程备注
 {draft}
 
+## 审核意见
+{review}
+
 ## 写作要求
 1. 结构：`## 结论` (2-4 句直接回答问题) → `## 主要发现` (分条) → `## 方法与口径` → `## 假设与局限`。
 2. **报告中出现的每个数字都必须来自上面的结论**，写数字的句子末尾标注来源，如 [F2]。不得自行计算新数字（包括差值、比例、合计）。
 3. 需要展示图表时，单独一行写图表编号，如 [C5]。
 4. 语言简洁、专业，面向业务读者；不要复述代码。主要发现 4-8 条，全文一般不超过 2000 字。
 5. 如果问题无法用数据回答，直接说明原因和需要什么数据，不要出现编造的数字。
+6. 审核意见中的每一条都要在"假设与局限"中体现（用读者能懂的话说明影响）；标为"未解决的错误"的结论不能当作确定结论写进"结论"部分。
 """
 
 REPORT_FIX = """报告未通过数字核查：
@@ -99,7 +103,8 @@ def format_profiles(profiles: dict[str, dict[str, Any]], max_cols: int = 40) -> 
     return "\n".join(blocks)
 
 
-def system_prompt(pack_prompt: str, semantic_summary: str, profiles_text: str, documents: list[str], experience_count: int) -> str:
+def system_prompt(pack_prompt: str, semantic_summary: str, profiles_text: str, documents: list[str], experience_count: int,
+                  lessons_text: str = "") -> str:
     parts = [SYSTEM]
     if pack_prompt.strip():
         parts.append("## 领域指引\n" + pack_prompt.strip())
@@ -110,10 +115,13 @@ def system_prompt(pack_prompt: str, semantic_summary: str, profiles_text: str, d
         parts.append("## 知识库文档（用 search_knowledge 检索）\n" + "、".join(documents))
     if experience_count:
         parts.append(f"## 经验库\n有 {experience_count} 条已验证的分析经验，遇到常见问题可先用 recall_experience 查看写法。")
+    if lessons_text:
+        parts.append(lessons_text)
     return "\n\n".join(parts)
 
 
 def format_findings(findings) -> str:
+    findings = [f for f in findings if getattr(f, "status", "active") == "active"]
     if not findings:
         return "（无）"
     return "\n".join(f"- [{f.id}] {f.claim}（证据 {f.evidence_id}）" for f in findings)
@@ -121,3 +129,180 @@ def format_findings(findings) -> str:
 
 def plan_to_text(plan: dict[str, Any]) -> str:
     return json.dumps(plan, ensure_ascii=False, indent=1)
+
+
+ANALYST_ROLE = """## 你的角色：分析员
+你只负责分析计划中的**一个步骤**。前面的步骤由其他分析员完成，你只能看到他们的总结、登记的结论和留在内核里的变量；
+你的代码和对话后续步骤也看不到。
+- 直接使用内核里已有的变量，不要重复前面步骤已经做过的计算
+- 只做本步骤的事，不要提前做后面的步骤
+- 关键数字用 record_finding 登记
+- 完成后调用 submit_step 提交：两三句话总结、后续要用的变量名
+"""
+
+HANDOFF = """用户问题：{question}
+
+## 整体计划
+{plan_overview}
+
+## 你负责：第 {index} 步 · {title}
+{detail}{deliverable}
+
+## 前面步骤的交接
+{previous}
+
+## 内核中已有的变量（可以直接使用）
+{variables}
+
+本步最多调用工具 {budget} 轮。完成后调用 submit_step。"""
+
+STEPS_LOW_ANALYST = "提醒：本步只剩 {remaining} 轮。请登记还没登记的关键结论，然后调用 submit_step 提交总结，不要再开始新的计算。"
+
+STEP_NUDGE = "你还没有调用 submit_step。请登记本步的关键结论，然后调用 submit_step 提交总结。"
+
+
+def handoff(question: str, plan: dict[str, Any], index: int, previous: list[dict[str, Any]], findings, variables, budget: int) -> str:
+    steps = plan.get("steps", [])
+    step = steps[index - 1]
+    overview = "\n".join(f"{'→ ' if i == index else '  '}{i}. {s.get('title', '')}" for i, s in enumerate(steps, 1))
+    by_id = {f.id: f for f in findings if getattr(f, "status", "active") == "active"}
+    prev_lines = []
+    for p in previous:
+        prev_lines.append(f"- 第 {p['index']} 步 {p['title']}（{_STATUS.get(p['status'], p['status'])}）：{p['summary']}")
+        for fid in p["findings"]:
+            if fid in by_id:
+                prev_lines.append(f"    [{fid}] {by_id[fid].claim}")
+        if p.get("notes"):
+            prev_lines.append(f"    提醒：{p['notes']}")
+    var_lines = [f"- `{v['name']}`：{v['desc']}" for v in variables]
+    deliverable = f"\n本步需要交付：{step['deliverable']}" if step.get("deliverable") else ""
+    return HANDOFF.format(
+        question=question,
+        plan_overview=overview,
+        index=index,
+        title=step.get("title", ""),
+        detail=step.get("detail", ""),
+        deliverable=deliverable,
+        previous="\n".join(prev_lines) or "（这是第一步）",
+        variables="\n".join(var_lines) or "（只有已加载的数据表）",
+        budget=budget,
+    )
+
+
+_STATUS = {"done": "完成", "partial": "部分完成", "blocked": "未能完成"}
+
+
+def step_digest(results: list[dict[str, Any]]) -> str:
+    """Analyst summaries, used as the draft for the report writer."""
+    return "\n".join(f"第 {r['index']} 步 {r['title']}（{_STATUS.get(r['status'], r['status'])}）：{r['summary']}" for r in results)
+
+
+# ---------------------------------------------------------------------- reviewer (phase 2)
+
+REVIEWER_SYSTEM = "你是严谨的数据分析审核员，熟悉统计方法和领域规范。只输出 JSON。"
+
+REVIEW = """你是审核员。分析员完成了分析工作，你要检查登记的结论在方法和表述上是否站得住。
+你看不到分析员的对话，只能看到结论、产生它的代码和输出。结论中的数字是否来自代码输出，程序已经核对过，不需要再核对数字是否抄对。
+
+## 用户问题
+{question}
+
+## 审核范围
+{task}
+
+## 待审核的结论
+{findings}
+
+## 程序规则检查已发现的问题（不要重复提出）
+{rule_issues}
+
+## 检查要点
+1. 方法和口径是否正确：筛选条件、时段、单位、分母，是否与语义层的指标定义一致
+2. 代码是否有会让数字本身出错的问题：多表关联导致重复计数、单位没有换算、缺失值处理不当
+3. 结论是否超出证据能支持的范围：把相关写成因果、把统计平均写成预测、外推过远、以偏概全
+{points}
+
+只输出 JSON，格式：
+{{"issues": [{{"finding": "F3", "severity": "error", "problem": "问题是什么（一两句话）", "suggestion": "怎么改"}}]}}
+- error：结论错误或会严重误导读者，必须重做
+- warning：结论基本成立，但需要补充说明或加限定条件
+- 没有问题时输出 {{"issues": []}}。不要为了挑错而挑错；拿不准的问题最多标 warning。"""
+
+REVIEW_REDO = """审核员退回了本步结果，需要处理以下问题：
+{issues}
+
+处理方式：
+- 结论有错的：修正代码重新计算，用 record_finding 登记更正后的结论，并用 replaces 参数指明替换哪条旧结论（如 replaces="F3"）
+- 结论没错、只是缺少说明的（如样本长度、选样方式、方法、不确定性）：把说明写进结论重新登记，同样用 replaces 替换旧结论
+- 你认为审核意见不成立的：不用修改，在 submit_step 的 notes 中写明理由
+完成后再次调用 submit_step。本轮最多调用工具 {budget} 轮。"""
+
+REVIEW_REDO_SINGLE = REVIEW_REDO.replace("在 submit_step 的 notes 中写明理由", "在最后的总结中写明理由").replace(
+    "完成后再次调用 submit_step。", "完成后不再调用工具，用一段话总结修正情况。"
+)
+
+SEVERITY = {"error": "错误", "warning": "警告"}
+
+
+def format_issue(issue, findings=None) -> str:
+    """One line per issue, for the analyst (redo) and for the report writer."""
+    who = issue.rule_id or "审核员"
+    claim = ""
+    if findings is not None:
+        f = findings.get(issue.finding_id)
+        claim = f"「{f.claim}」" if f else ""
+    text = f"- [{who} · {SEVERITY.get(issue.severity, issue.severity)}] {issue.finding_id}{claim}："
+    text += "；".join(x for x in (issue.detail, issue.message) if x)
+    if issue.suggestion:
+        text += f" 建议：{issue.suggestion}"
+    if issue.basis:
+        text += f"（依据：{issue.basis}）"
+    return text
+
+
+def format_review_for_report(issues, findings) -> str:
+    if not issues:
+        return "（无）"
+    lines = []
+    for i in issues:
+        line = format_issue(i, findings)
+        if i.severity == "error":
+            line = line.replace("· 错误]", "· 未解决的错误]", 1)
+        lines.append(line)
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------- reflector (phase 3)
+
+REFLECTOR_SYSTEM = "你是反思员，负责从数据分析运行的失败中总结可以照做的经验。只输出 JSON。"
+
+REFLECT = """下面是一次数据分析运行中出现的失败，以及（如果有的话）后来成功的做法。请总结出以后的运行可以直接照做的教训。
+
+## 用户问题
+{question}
+
+## 失败记录
+{failures}
+
+## 已有的教训（不要重复；如果这次的失败说明某条已有教训仍然重要，在 reinforces 中填它的编号）
+{existing}
+
+## 要求
+- 每条教训一句话，写成"做什么 / 不要做什么"，不超过 60 字。例如："plotly 设置标题和坐标轴用 fig.update_layout()，Figure 没有 add_layout 方法"
+- 必须是以后其他问题也用得上的通用做法；不要写这次数据的具体结论和数值
+- when 写适用场景，如"用 plotly 画图时""登记百分比结论时"
+- scope：和这个领域的分析方法有关写 "pack"；和运行环境、Python 库、工具用法有关写 "all"
+- from 填这条教训来自哪几条失败记录的编号
+- 偶然的笔误、一次就自己改好且不太会再犯的小问题，不要总结
+- 没有值得总结的就返回空列表；最多 {max_lessons} 条
+
+只输出 JSON：
+{{"lessons": [{{"text": "...", "when": "...", "scope": "all", "from": [1], "reinforces": null}}]}}"""
+
+
+def format_lessons(lessons) -> str:
+    """The prompt section with lessons from earlier runs."""
+    if not lessons:
+        return ""
+    lines = [f"- [{x.label}] {x.when + '：' if x.when else ''}{x.text}" for x in lessons]
+    return "## 以往运行总结的教训\n反思员从以前运行的失败中总结的经验，遇到相应场景时照做：\n" + "\n".join(lines)

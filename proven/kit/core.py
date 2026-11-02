@@ -99,9 +99,45 @@ def profile(name: str, sample_rows: int = 3) -> dict:
             top = s.dropna().astype(str).value_counts().head(3)
             info["top"] = [str(x)[:40] for x in top.index]
         cols.append(info)
-    sample = df.head(sample_rows).map(_jsonable).to_dict(orient="records")
+    # Row by row: DataFrame.map skips missing values in pandas string columns, leaving NaN (invalid JSON).
+    sample = [{str(k): _jsonable(v) for k, v in row.items()} for row in df.head(sample_rows).to_dict(orient="records")]
     return {"name": name, "rows": int(len(df)), "columns": cols, "sample": sample}
 
 
 def _profile_json(name: str) -> None:
     print(json.dumps(profile(name), ensure_ascii=False, default=str))
+
+
+def _describe(value) -> str:
+    if isinstance(value, pd.DataFrame):
+        cols = ", ".join(map(str, value.columns[:8])) + (" …" if value.shape[1] > 8 else "")
+        return f"DataFrame {value.shape[0]}×{value.shape[1]}（{cols}）"
+    if isinstance(value, pd.Series):
+        return f"Series 长度 {len(value)}" + (f"（{value.name}）" if value.name is not None else "")
+    if isinstance(value, np.ndarray):
+        return f"ndarray {value.shape}"
+    if isinstance(value, (bool, int, float, np.integer, np.floating)):
+        return f"{type(value).__name__} = {value!r}"[:60]
+    if isinstance(value, str):
+        return f"str = {value[:40]!r}"
+    if isinstance(value, (list, tuple, dict, set)):
+        return f"{type(value).__name__} 长度 {len(value)}"
+    return type(value).__name__
+
+
+def _user_variables(baseline: set[str], limit: int = 30) -> list[dict]:
+    """Variables the analysis created, for handing over to the next analyst (multi mode)."""
+    import inspect
+    import types
+
+    from IPython import get_ipython
+
+    ns = get_ipython().user_ns
+    out = []
+    for name, value in ns.items():
+        if name in baseline or name.startswith("_") or name in tables:
+            continue
+        if isinstance(value, types.ModuleType) or inspect.isfunction(value) or inspect.isclass(value):
+            continue
+        out.append({"name": name, "desc": _describe(value)})
+    return out[-limit:]

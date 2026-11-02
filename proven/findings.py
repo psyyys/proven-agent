@@ -29,6 +29,7 @@ _DATE_PATTERNS = [
     re.compile(r"(?<![0-9.,])(?:19|20)\d{2}(?![0-9.,]|\s*(?:%|％|万|亿))"),  # bare years
     re.compile(r"\d{1,2}:\d{2}(?::\d{2})?"),  # times
 ]
+_DECLINE = re.compile(r"下降|减少|降低|下跌|下滑|回落|减|降|跌|少")
 _LIST_MARKER = re.compile(r"^\s*(?:\d+[.)、]|#+)\s", re.M)
 
 
@@ -50,6 +51,8 @@ class Finding:
     evidence_id: str  # cell id (C3) or chunk id (D12)
     value: float | None = None
     numbers: list[float] = field(default_factory=list)
+    status: str = "active"  # "active" | "retracted" (replaced after review)
+    replaced_by: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -135,11 +138,17 @@ def numbers_in_evidence(text: str) -> list[float]:
 def unsupported_numbers(claim: str, evidence_text: str) -> list[str]:
     """Numbers in a claim that do not appear in the evidence output."""
     evidence = numbers_in_evidence(evidence_text)
+    negatives = [-v for v in evidence if v < 0]
     missing = []
     # Small whole numbers ("前 5 名") are skipped, consistent with the report check.
     for n in extract_numbers(claim):
-        if not any(matches(n, v) for v in evidence):
-            missing.append(n.raw)
+        if any(matches(n, v) for v in evidence):
+            continue
+        # "下降 5.64%" for a computed -5.64: accepted only when the claim states the direction,
+        # so "增长 5.64%" for a real decline is still rejected.
+        if _DECLINE.search(claim[max(0, n.start - 8) : n.start]) and any(matches(n, v) for v in negatives):
+            continue
+        missing.append(n.raw)
     return missing
 
 
@@ -163,9 +172,17 @@ class FindingRegistry:
     def get(self, fid: str) -> Finding | None:
         return next((f for f in self.items if f.id == fid), None)
 
+    def active(self) -> list[Finding]:
+        return [f for f in self.items if f.status == "active"]
+
+    def retract(self, fid: str, by: str) -> None:
+        f = self.get(fid)
+        if f is not None:
+            f.status, f.replaced_by = "retracted", by
+
     def supported_values(self) -> list[float]:
         vals: list[float] = []
-        for f in self.items:
+        for f in self.active():
             vals.extend(f.numbers)
             if f.value is not None:
                 vals.append(f.value)
@@ -202,7 +219,7 @@ def check_report(report: str, registry: FindingRegistry, extra_allowed: Iterable
             ctx = report[max(0, n.start - 20) : n.end + 10].replace("\n", " ")
             bad.append({"number": n.raw, "context": ctx, "start": n.start, "end": n.end})
 
-    known = {f.id for f in registry.items}
+    known = {f.id for f in registry.active()}
     cited = set(re.findall(r"F\d+", " ".join(_CITATION.findall(report))))
-    unknown = sorted(c for c in cited if c not in known)
+    unknown = sorted(c for c in cited if c not in known)  # retracted findings count as unknown
     return ReportCheck(checked=len(nums), unsupported=bad, unknown_citations=unknown)

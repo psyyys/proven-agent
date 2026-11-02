@@ -58,8 +58,9 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
         raise KeyError(f"没有找到运行记录 {run_id}")
     lines: list[str] = []
     t0 = events[0].ts
-    stats = {"tool_calls": 0, "tool_errors": 0, "cell_errors": 0, "rejected_findings": 0}
+    stats = {"tool_calls": 0, "tool_errors": 0, "cell_errors": 0, "rejected_findings": 0, "review_errors": 0, "redo": 0}
     errors: list[str] = []
+    steps: list[tuple] = []
 
     def at(e) -> str:
         return f"+{e.ts - t0:.1f}s"
@@ -67,7 +68,9 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
     for e in events:
         d = e.data
         if e.type == T.RUN_STARTED:
-            lines += [f"# 运行日志 {run_id}", "", f"- 问题：{d.get('question')}", f"- 领域包：{d.get('pack')}　模型：{d.get('model')}",
+            lines += [f"# 运行日志 {run_id}", "", f"- 问题：{d.get('question')}",
+                      f"- 领域包：{d.get('pack')}　模型：{d.get('model')}　模式：{d.get('mode', 'single')}　审核：{d.get('review', 'off')}"
+                      f"　经验：{d.get('lessons', 'off')}",
                       f"- 开始时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(e.ts))}", ""]
         elif e.type == T.LLM_CALL:
             u = d.get("usage") or {}
@@ -84,13 +87,23 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
             lines += ["", "## 执行过程", ""]
         elif e.type == T.PLAN_APPROVED:
             lines += [f"> {at(e)} 用户确认计划" + ("（有修改）" if d.get("edited") else ""), ""]
+        elif e.type == T.STEP_STARTED:
+            lines += [f"## 第 {d['task']}/{d.get('total', '?')} 步：{d.get('title')}（分析员，全新上下文）", "", d.get("detail", ""), ""]
+        elif e.type == T.STEP_FINISHED:
+            u = d.get("usage") or {}
+            steps.append((d["task"], d.get("title"), d.get("status"), u.get("input_tokens", 0) + u.get("output_tokens", 0), u.get("llm_calls", 0)))
+            lines += [f"**本步结果（{d.get('status')}，{d.get('outcome')}）**：{d.get('summary')}",
+                      f"结论：{', '.join(d.get('findings') or []) or '无'}；交接变量：{', '.join(d.get('variables') or []) or '无'}"
+                      + (f"；提醒：{d['notes']}" if d.get("notes") else ""),
+                      f"本步用量：模型调用 {u.get('llm_calls', 0)} 次，Token {u.get('input_tokens', 0) + u.get('output_tokens', 0)}", ""]
         elif e.type == T.THOUGHT:
             lines += [f"💭 {d['text']}", ""]
         elif e.type == T.TOOL_CALL:
             stats["tool_calls"] += 1
             args = dict(d.get("arguments") or {})
             code = args.pop("code", None) or args.pop("sql", None)
-            lines.append(f"### {at(e)} 第 {d.get('step')} 步 · `{d['name']}`")
+            label = f"第 {d['task']} 步·第 {d.get('step')} 轮" if d.get("task") else f"第 {d.get('step')} 步"
+            lines.append(f"### {at(e)} {label} · `{d['name']}`")
             if args:
                 lines.append(_fence(json.dumps(args, ensure_ascii=False, indent=1), "json"))
             if code:
@@ -111,6 +124,34 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
             lines += [f"{'✅' if ok else '❌'} 结果（{d.get('duration_ms', 0)} ms）：", _fence(_cut(d.get("text", ""))), ""]
         elif e.type == T.ASK_USER:
             lines += [f"❓ 向用户提问：{d['question']}", ""]
+        elif e.type == T.REVIEW:
+            action = {"redo": "退回重做", "accept": "通过", "final": "复审完成"}.get(d.get("action"), d.get("action"))
+            if d.get("round") == 1:
+                stats["review_errors"] += d.get("errors", 0)
+                stats["redo"] += d.get("action") == "redo"
+            lines.append(f"### {at(e)} 🧐 审核第 {d.get('round')} 轮（{'规则 + 模型' if d.get('model') else '规则'}）："
+                         f"错误 {d.get('errors', 0)}，警告 {d.get('warnings', 0)} → {action}")
+            for i in d.get("issues") or []:
+                who = i.get("rule_id") or "审核员"
+                text = "；".join(x for x in (i.get("detail"), i.get("message")) if x)
+                lines.append(f"- [{who} · {'错误' if i.get('severity') == 'error' else '警告'}] {i.get('finding_id')}：{text}"
+                             + (f" 建议：{i['suggestion']}" if i.get("suggestion") else ""))
+            lines.append("")
+        elif e.type == T.LESSONS_INJECTED:
+            lines += ["**参考的以往教训**（放进了提示词）：", ""] + [f"- [{x['label']}] {x['when'] + '：' if x.get('when') else ''}{x['text']}"
+                                                         for x in d.get("lessons") or []] + [""]
+        elif e.type == T.REFLECTION:
+            fails = d.get("failures") or []
+            lines += ["## 反思", "", f"失败 {len(fails)} 类：" + "、".join(f"{f['kind']}（{f['signature'][:50]}）" for f in fails)
+                      if fails else "本次没有失败"]
+            if d.get("credited"):
+                label = {"helped": "未再出现对应失败", "failed": "对应失败再次出现", "retired": "多次无效，已停用"}
+                lines += ["", "本次参考的教训：" + "；".join(f"L{k} {label.get(v, v)}" for k, v in d["credited"].items())]
+            lines += [""] + [f"- 新教训 [{x['label']}] {x['text']}" for x in d.get("added") or []]
+            lines += [f"- 强化已有教训 L{i}" for i in d.get("reinforced") or []]
+            lines += [f"- 已丢弃（包含本次结果数字）：{t}" for t in d.get("skipped") or []] + [""]
+        elif e.type == T.FINDING_RETRACTED:
+            lines += [f"↺ {d['id']} 已被 {d['replaced_by']} 替换", ""]
         elif e.type == T.CHECK:
             if d.get("ok"):
                 lines += [f"🔎 报告核查第 {d['attempt']} 次：通过（{d['checked']} 个数字）", ""]
@@ -120,7 +161,13 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
         elif e.type == T.REPORT:
             lines += ["## 最终报告", "", d.get("markdown", ""), ""]
             if d.get("findings"):
-                lines += ["## 已登记结论", ""] + [f"- **{f['id']}** {f['claim']}（证据 {f['evidence_id']}）" for f in d["findings"]] + [""]
+                lines += ["## 已登记结论", ""] + [
+                    f"- **{f['id']}** {'~~' + f['claim'] + '~~（已被 ' + str(f.get('replaced_by')) + ' 替换）' if f.get('status') == 'retracted' else f['claim']}"
+                    f"（证据 {f['evidence_id']}）" for f in d["findings"]] + [""]
+            if d.get("issues"):
+                lines += ["## 未解决的审核意见", ""] + [
+                    f"- [{i.get('rule_id') or '审核员'} · {'错误' if i.get('severity') == 'error' else '警告'}] {i.get('finding_id')}："
+                    f"{i.get('detail') or i.get('message')}" for i in d["issues"]] + [""]
         elif e.type == T.RUN_FINISHED:
             u = d.get("usage") or {}
             summary = [
@@ -130,6 +177,11 @@ def run_to_markdown(store: TraceStore, run_id: str) -> str:
                 f"- 耗时：{e.ts - t0:.0f} 秒；模型调用 {u.get('llm_calls', 0)} 次；Token 输入 {u.get('input_tokens', 0)} / 输出 {u.get('output_tokens', 0)}",
                 f"- 工具调用 {stats['tool_calls']} 次，失败 {stats['tool_errors']} 次（其中代码报错 {stats['cell_errors']} 次，结论登记被拒 {stats['rejected_findings']} 次）",
             ]
+            if stats["review_errors"] or stats["redo"]:
+                summary.append(f"- 审核发现错误 {stats['review_errors']} 个，退回重做 {stats['redo']} 次")
+            if steps:
+                summary += ["", "### 各步骤用量", "", "| 步骤 | 状态 | 模型调用 | Token |", "|---|---|---|---|"]
+                summary += [f"| {i}. {t} | {st} | {c} | {tok} |" for i, t, st, tok, c in steps]
             if errors:
                 summary += ["", "### 失败的工具调用", ""] + [f"- {x}" for x in errors]
             lines = lines[:6] + summary + [""] + lines[6:]

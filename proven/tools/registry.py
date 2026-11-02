@@ -15,6 +15,7 @@ class ToolResult:
     ok: bool = True
     data: dict[str, Any] = field(default_factory=dict)  # structured payload for the UI / trace
     stop: bool = False  # end the run after this tool (e.g. waiting for the user)
+    finish: bool = False  # end the current analyst's loop with a structured result (multi mode)
 
 
 Handler = Callable[["RunContext", dict[str, Any]], Awaitable[ToolResult]]
@@ -48,6 +49,12 @@ class ToolRegistry:
 
     def schemas(self) -> list[dict[str, Any]]:
         return [t.schema() for t in self._tools.values()]
+
+    def without(self, *names: str) -> "ToolRegistry":
+        return ToolRegistry([t for n, t in self._tools.items() if n not in names])
+
+    def with_tools(self, *tools: Tool) -> "ToolRegistry":
+        return ToolRegistry([*self._tools.values(), *tools])
 
 
 def params(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
