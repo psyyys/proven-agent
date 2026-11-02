@@ -80,7 +80,7 @@ python -m venv .venv
 .venv\Scripts\activate              # 若提示"禁止运行脚本"，先执行：Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 pip install -e ".[dev]"
 copy .env.example .env             # 用记事本编辑 .env，填入 API Key 和模型名
-python scripts\fetch_datasets.py   # 下载示例数据（公开数据集，约 12 MB）
+python scripts\fetch_datasets.py   # 下载示例数据（公开数据集，约 3 MB）
 cd frontend
 npm install                        # 国内网络慢可先执行：npm config set registry https://registry.npmmirror.com
 npm run build
