@@ -103,6 +103,8 @@ proven serve
 打开 http://127.0.0.1:8000 ，在左上角选择领域包，在左侧加载示例数据，然后提问。
 
 > 每次新开终端都要先激活虚拟环境（`.venv\Scripts\activate`），否则会提示找不到 `proven` 命令。
+>
+> 示例数据放在 GitHub 上。下载时如果出现"远程主机强迫关闭了一个现有的连接"，脚本会自动重试并改用 jsDelivr 镜像；也可以直接用 `python scripts\fetch_datasets.py --mirror` 优先走镜像，或者先设置代理（`$env:HTTPS_PROXY="http://127.0.0.1:端口"`）再运行。
 
 ### 模型配置
 
