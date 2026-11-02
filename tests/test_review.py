@@ -176,7 +176,7 @@ def test_retracted_findings_cannot_be_cited():
     assert check.unknown_citations == ["F1"] and [u["number"] for u in check.unsupported] == ["1.32"]
 
 
-@pytest.mark.parametrize("pack", ["water", "business"])
+@pytest.mark.parametrize("pack", ["water", "business", "finance"])
 async def test_trap_cases_pass_with_rules(pack):
     report = await run_review_eval(discover_packs()[pack])
     failed = [(r["id"], r["expect"], r["fired"]) for r in report["results"] if not r["passed"]]

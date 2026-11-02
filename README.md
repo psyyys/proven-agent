@@ -21,7 +21,7 @@
 | **混合检索 RAG** | BM25（jieba 中文分词）+ 向量检索，RRF 融合，可选重排模型；每段原文有编号，可作为证据 |
 | **经验库** | 两种记忆：你确认正确的分析代码；反思员从失败中自动总结的教训（如"plotly 设置标题用 update_layout"）。之后的运行会把相关教训放进提示词；用过之后同样的失败仍然出现的教训会被降权、停用。不训练模型，思路来自 Reflexion |
 | **可复现** | 整个分析可导出为 Jupyter Notebook，任何人都能重新运行 |
-| **领域插件** | 通用核心 + 可替换的领域包。目前有：通用、商业·信息系统、水利·水资源与水文 |
+| **领域插件** | 通用核心 + 可替换的领域包。目前有：通用、商业·信息系统、水利·水资源与水文、金融·宏观与微观经济 |
 | **评测体系** | 每个领域包带测试题，自动计算标准答案并打分，可对比不同模型 |
 | **多 Agent 模式** | 可选：每个计划步骤派一个上下文独立的分析员，通过结构化交接单和共享内核协作，减少上下文膨胀；每一步提交后由审核员检查，运行结束后由反思员总结教训。可与单 Agent 模式在评测集上对比。见 [docs/multi-agent.md](docs/multi-agent.md) |
 | **模型无关** | 走 OpenAI 兼容接口，通义千问、DeepSeek 等切换只改配置 |
@@ -58,7 +58,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env               # 编辑 .env，填入 API Key 和模型名
-python scripts/fetch_datasets.py   # 下载示例数据（公开数据集，约 10 MB）
+python scripts/fetch_datasets.py   # 下载示例数据（公开数据集，约 12 MB）
 cd frontend && npm install && npm run build && cd ..
 proven serve
 ```
@@ -207,7 +207,15 @@ proven/packs/your_domain/
 | 水利 | CAMELS 逐日水文气象（4 个流域，2000-2002） | Newman et al. (2015)，同上 |
 | 水利 | USGS 年最大洪峰（01594440 站，2000-2018） | USGS NWIS，经 [dataretrieval-python](https://github.com/DOI-USGS/dataretrieval-python) 测试数据获取，公共领域 |
 
-`python scripts/fetch_datasets.py --usgs-site 01646500` 可以直接从 USGS 下载其他站点更长的洪峰序列。
+| 金融 | 美国宏观季度数据（1950-2000：实际 GDP、消费、投资、CPI、M1、利率、失业率等） | Greene《计量经济分析》表 F5.1，经 [Rdatasets](https://github.com/vincentarelbundock/Rdatasets)（R 包 AER）获取 |
+| 金融 | 美国 10 年期国债收益率（月度，1953 年起） | 美联储 H.15，经 [datahub.io](https://github.com/datasets/bond-yields-us-10y) 获取，公共领域 |
+| 金融 | 世界银行各国宏观面板（GDP、人口、CPI 通胀、GDP 平减指数，1960 年起） | World Bank WDI，经 [datahub.io](https://github.com/datasets) 获取，ODC-PDDL |
+| 金融 | S&P 500 月度数据（1871 年起：点位、股息、盈利、CAPE） | Robert Shiller，经 [datahub.io](https://github.com/datasets/s-and-p-500) 获取，ODC-PDDL |
+| 金融 | 行业与市场超额收益（月度，1960-2002） | Kenneth French 数据库，经 Rdatasets（R 包 Ecdat）获取 |
+| 金融 | S&P 500 成分股财务快照（约 500 家公司） | Yahoo Finance，经 [datahub.io](https://github.com/datasets/s-and-p-500-companies-financials) 获取，ODC-PDDL |
+| 金融 | 美国工资调查（CPS 1985，534 人） | Berndt (1991)，经 Rdatasets（R 包 AER）获取 |
+
+`python scripts/fetch_datasets.py --usgs-site 01646500` 可以直接从 USGS 下载其他站点更长的洪峰序列。金融数据都固定在具体的提交版本，评测的标准答案不会随源数据更新而变化。
 
 ## 当前限制
 

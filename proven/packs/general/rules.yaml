@@ -20,7 +20,8 @@ rules:
     name: 写"显著"必须有显著性检验支撑
     type: consistency
     severity: error
-    applies_when: [显著上升, 显著下降, 显著增加, 显著减少, 显著增长, 显著降低, 显著相关, 显著差异, 显著趋势, 统计显著, 显著的, significant]
+    applies_when: [显著上升, 显著下降, 显著增加, 显著减少, 显著增长, 显著降低, 显著相关, 显著差异, 显著趋势, 统计显著, 显著的,
+                   显著高于, 显著低于, 显著为正, 显著为负, 显著优于, 显著跑赢, significant]
     unless_mention: [不显著, 无显著, 没有显著, 并不显著, 未达到显著, 不具有显著, 未通过显著性, not significant, insignificant, α=0.1, α = 0.1, 0.1 水平, 10% 水平, 0.01 水平, α=0.01]
     check: {fact: p_value, max: 0.05, in: [claim, evidence], if_missing: error}
     message: 写"显著"必须有检验结果且 p ≤ 0.05；不满足时请改写为"有上升/下降倾向，但不显著"。如采用其他显著性水平，请在结论中写明（如 α=0.1）

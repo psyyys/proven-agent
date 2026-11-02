@@ -240,7 +240,9 @@ def evaluate(rule: Rule, ev: Evidence) -> tuple[str, str] | None:
             text = re.sub(re.escape(t), " ", text, flags=re.I)
         if any(_has(text, t) for t in c["mention_any"]):
             return None
-        return rule.severity, "未提到：" + "、".join(t[3:] if t.startswith("re:") else t for t in c["mention_any"][:6])
+        words = [t for t in c["mention_any"] if not t.startswith("re:")]
+        more = len(c["mention_any"]) > 6 or len(words) < len(c["mention_any"])
+        return rule.severity, "未提到：" + "、".join(words[:6]) + ("等" if more else "")
 
     fact_scopes = scopes if "in" in c else ["claim", "evidence", "run"]
     if "ratio" in c:

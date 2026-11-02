@@ -1,0 +1,142 @@
+# 金融 · 宏观与微观经济 领域规则（初稿）
+#
+# 由 Claude 起草，作者需要核实阈值和依据。格式说明见 docs/domain-rules-template.md
+# 主要参考：Bodie, Kane, Marcus《投资学》；Mankiw《宏观经济学》；Wooldridge《计量经济学导论》；
+#           Sharpe (1994) "The Sharpe Ratio"；Brown, Goetzmann, Ibbotson, Ross (1992) 关于幸存者偏差
+
+review_points:
+  - 数据中的收益是否已经是超额收益（capm_monthly 的行业和市场收益已减去无风险收益），夏普比率是否重复扣减了无风险利率
+  - 百分数与小数是否混用（收益、利率、股息率），年化方法是否与数据频率一致（√12、√4、√252）
+  - 名义值与实际值是否区分清楚：用现价美元 GDP 算出的增长不是实际经济增长
+  - 时间序列回归是否用了有趋势的水平值（伪回归），应改用增长率或差分
+  - 回测是否有前视偏差（用了当时还不知道的数据）、幸存者偏差（只用现存公司或现在的成分股）
+  - 宏观变量之间的回归结论是否被写成了因果关系
+  - 世界银行数据是否误把区域、收入组汇总当成国家参与加总或排名
+  - Shiller 数据 2023-07 之后的 0 值是否被当成真实数值参与计算
+  - 估值比较是否用了平均数而受极端值影响，是否排除了亏损公司
+  - 截面工资回归的系数是否被直接解读为因果效应（如教育回报率存在能力偏差）
+
+rules:
+  # ---------- 取值范围 ----------
+  - id: F001
+    name: 最大回撤不超过 100%
+    type: range
+    severity: error
+    applies_when: [最大回撤, max drawdown, 回撤]
+    check: {abs_max: 100, percent: true}
+    message: 最大回撤的绝对值不可能超过 100%，检查是否用错了价格序列（如对收益率而不是净值求回撤）或单位
+    basis: 回撤定义为 P_t / max(P_0..P_t) - 1，价格非负，因此取值在 -100% 到 0 之间
+
+  - id: F002
+    name: 夏普比率异常偏高
+    type: range
+    severity: warning
+    applies_when: [夏普比率, 夏普, Sharpe]
+    check: {max: 3}
+    message: 年化夏普比率超过 3 非常罕见（股票市场长期约为 0.3–0.5），检查是否漏减无风险利率、年化方法是否正确、样本是否过短
+    basis: Sharpe (1994)；美国股市长期年化夏普比率约 0.3–0.5（经验值，阈值 3 待核实）
+
+  - id: F003
+    name: 失业率在 0 到 100% 之间
+    type: range
+    severity: error
+    applies_when: [失业率]
+    check: {min: 0, max: 100, percent: true}
+    message: 失业率是失业人数占劳动力的比例，只能在 0–100% 之间，检查单位或是否把变化量当成了水平值
+    basis: 失业率的定义
+
+  - id: F004
+    name: 股息率异常偏高
+    type: range
+    severity: warning
+    applies_when: [股息率, dividend yield]
+    check: {min: 0, max: 20, percent: true}
+    message: 股息率超过 20% 极为罕见，检查小数与百分数是否混用（0.02 表示 2%）
+    basis: 经验值：成熟市场个股股息率通常低于 10%
+
+  - id: F005
+    name: 亏损公司的市盈率没有意义
+    type: range
+    severity: warning
+    applies_when: [市盈率, P/E]
+    check: {min: 0}
+    message: 市盈率为负说明公司亏损，此时市盈率没有估值意义；行业比较时应排除负值并说明排除了多少家
+    basis: 《投资学》估值章节：市盈率只适用于盈利为正的公司
+
+  # ---------- 适用条件 ----------
+  - id: F101
+    name: 夏普比率要说明频率和是否年化
+    type: condition
+    severity: warning
+    applies_when: [夏普比率, 夏普, Sharpe]
+    check:
+      mention_any: [年化, 月度, 日度, 季度, 年度, annualized, monthly]
+      in: [claim, evidence]
+    message: 不同频率的夏普比率不能直接比较，结论中请写明数据频率以及是否年化
+    basis: 年化夏普比率 = 期夏普比率 × √每年期数（Sharpe 1994）
+
+  - id: F102
+    name: β、α 要说明样本期
+    type: condition
+    severity: warning
+    applies_when: [β, beta, 贝塔, α, alpha, 阿尔法]
+    check:
+      mention_any: ["re:(?:19|20)\\d{2}", 样本期, 全样本]
+      in: [claim, evidence, run]
+    message: β 和 α 随时间变化，结论中请写明估计所用的样本期和数据频率
+    basis: CAPM 参数的时变性（《投资学》指数模型章节）
+
+  - id: F103
+    name: 回测结果要说明交易成本
+    type: condition
+    severity: warning
+    applies_when: [回测, 策略收益, 策略年化, 跑赢基准, backtest]
+    check:
+      mention_any: [交易成本, 手续费, 佣金, 滑点, 冲击成本, 未扣除成本, 不含成本, 扣除成本]
+      in: [claim, evidence]
+    message: 回测收益必须说明是否扣除交易成本；高换手策略扣除成本后表现可能完全不同
+    basis: 回测规范：交易成本对净收益影响显著（经验规则）
+
+  - id: F104
+    name: 宏观经验关系要说明样本期
+    type: condition
+    severity: warning
+    applies_when: [菲利普斯曲线, 奥肯定律, 奥肯系数, Phillips, Okun]
+    check:
+      mention_any: ["re:(?:19|20)\\d{2}", 样本期, 全样本]
+      in: [claim, evidence, run]
+    message: 菲利普斯曲线、奥肯定律等关系在不同时期差异很大（如 1970 年代滞胀），结论中请写明样本期
+    basis: Mankiw《宏观经济学》关于预期修正菲利普斯曲线和奥肯定律的讨论
+
+  - id: F105
+    name: 回测要警惕幸存者偏差
+    type: condition
+    severity: warning
+    applies_when: [回测, 历史表现, 历史收益]
+    check:
+      mention_any: [幸存者偏差, 幸存者, 退市, 当时的成分股, 历史成分股, survivorship]
+      in: [claim, evidence, run]
+    message: 用现在的公司或成分股名单回看历史，会遗漏退市和被剔除的公司，收益被高估；请说明是否存在幸存者偏差
+    basis: Brown, Goetzmann, Ibbotson, Ross (1992)
+
+  # ---------- 文字与数字一致 ----------
+  - id: F201
+    name: 经济增长率要说明名义还是实际
+    type: consistency
+    severity: warning
+    applies_when: [GDP 增长, GDP增长, GDP 增速, GDP增速, 经济增长率, 经济增速]
+    check:
+      mention_any: [实际, 名义, 不变价, 现价, 剔除通胀, 美元计价, real, nominal]
+      in: [claim, evidence]
+    message: 请写明增长率是实际（不变价）还是名义（现价、美元计价）；名义美元增长包含通胀和汇率变化，不等于经济增长
+    basis: 国民经济核算中实际 GDP 与名义 GDP 的区别（Mankiw《宏观经济学》第 2 章）
+
+  - id: F202
+    name: 写"显著的 α"要有 t 值或 p 值
+    type: consistency
+    severity: error
+    applies_when: [显著为正的 α, α 显著, alpha 显著, 显著的超额收益, 显著跑赢]
+    unless_mention: [不显著, 并不显著]
+    check: {fact: {labels: ["t 值", "t值", "t-stat", "t 统计量", "t统计量", "t ="], name: t 值}, abs_min: 1.96, in: [claim, evidence], if_missing: error}
+    message: 说 α 显著必须给出 t 值（|t| ≥ 1.96，即 5% 水平）或 p 值；不显著时应写"α 与 0 没有显著差异"
+    basis: 回归系数的 t 检验，双侧 5% 显著性水平对应 |t| ≥ 1.96

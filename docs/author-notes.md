@@ -14,6 +14,11 @@
 - [ ] **审核员陷阱测试用例** `proven/packs/water/evals/review_cases.yaml`：用例是 Claude 和规则一起写的，100% 拦截率不能说明效果。最好自己补几条，或者从真实运行日志里摘出模型实际犯的错
 - [ ] **通用规则** `proven/packs/general/rules.yaml`：G002 显著性 0.05、G003 强相关 0.7 的阈值是否符合你的学科习惯
 - [ ] **商业规则** `proven/packs/business/rules.yaml`：信息系统方向如果有更专业的规则（数据质量、指标口径），可以补充
+- [ ] **金融领域包** `proven/packs/finance/`：
+  - [ ] 规则 `rules.yaml`：F002 夏普比率上限 3、F004 股息率上限 20% 是经验值，确认是否合理
+  - [ ] 知识库 `knowledge/` 四篇文档：对照教材（《投资学》《宏观经济学》《计量经济学导论》）检查表述
+  - [ ] 评测题 `evals/questions.yaml`：题目是否是你会问的问题；可以补几道中国数据的题（需要先找到可下载的数据）
+  - [ ] 理解几个"陷阱"，面试时很好讲：超额收益重复扣减无风险利率、名义美元 GDP 增长≠实际增长、世界银行汇总行重复计算、Shiller 数据 2023 年后的 0 值、全样本菲利普斯曲线斜率为正、datahub 通胀文件名弄反
 - [ ] **水文函数** `proven/kit/water.py`：`p3_fit()`、`p3_design_values()` 的公式是否正确
 - [ ] **水利知识库** `proven/packs/water/knowledge/`：文档内容是否准确
 
