@@ -57,6 +57,8 @@ def test_api_flow(settings):
 
         nb = client.get(f"/api/sessions/{sid}/notebook")
         assert nb.status_code == 200 and "print(len(Customer))" in nb.text
+        # data paths are relative to the project root: portable, and no local folder names
+        assert "load_table('data/business/chinook/Customer.csv')" in "".join(json.loads(nb.text)["cells"][1]["source"])
         assert client.post(f"/api/runs/{rid}/verify").json()["experience_id"] == 1
         assert client.get(f"/api/runs/{rid}/otel").json()["resourceSpans"][0]["scopeSpans"][0]["spans"]
         assert client.get(f"/api/sessions/{sid}/chunks/D1").json()["source"] == "数据质量与指标口径说明.md"

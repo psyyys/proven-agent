@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import re
+from pathlib import Path
 
 import nbformat
 from nbformat import v4
@@ -29,12 +32,31 @@ def _outputs(cell: CellResult) -> list:
     return outs
 
 
+_STRING = re.compile(r"'(?:[^'\\]|\\.)*'")
+
+
+def portable(code: str, base: Path | None = None) -> str:
+    """Rewrite absolute file paths under `base` (the directory Proven runs from, normally the project root)
+    as relative POSIX paths, so the notebook runs on another machine and does not reveal local folders."""
+    base = (base or Path.cwd()).resolve()
+
+    def sub(m: re.Match) -> str:
+        try:
+            rel = Path(ast.literal_eval(m.group(0))).resolve().relative_to(base)
+        except (ValueError, SyntaxError):
+            return m.group(0)
+        return repr(rel.as_posix())
+
+    return _STRING.sub(sub, code)
+
+
 def export_notebook(session: Session) -> str:
     nb = v4.new_notebook()
     nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
     nb.cells.append(v4.new_markdown_cell(f"# Proven 分析记录\n\n领域包：{session.pack.name}　会话：`{session.id}`\n\n"
-                                         "运行下面的准备单元会重新加载数据，之后每个单元都可以复现报告中的数字。"))
-    setup = ["import pandas as pd, numpy as np, duckdb", "import plotly.express as px, plotly.graph_objects as go", *session.setup_code]
+                                         "在项目根目录打开本 Notebook，运行下面的准备单元会重新加载数据，之后每个单元都可以复现报告中的数字。"))
+    setup = ["import pandas as pd, numpy as np, duckdb", "import plotly.express as px, plotly.graph_objects as go",
+             *(portable(c) for c in session.setup_code)]
     nb.cells.append(v4.new_code_cell("# 准备：导入与加载数据\n" + "\n".join(setup)))
 
     for run in session.runs.values():
